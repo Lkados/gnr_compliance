@@ -1,0 +1,107 @@
+{
+  "actions": [],
+  "creation": "2025-01-01 00:00:00",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": [
+    "category_name",
+    "category_path",
+    "column_break_1",
+    "is_active",
+    "priority",
+    "section_break_1",
+    "matching_conditions",
+    "item_group_pattern",
+    "item_code_pattern",
+    "item_name_pattern",
+    "column_break_2",
+    "advanced_conditions",
+    "brand_pattern",
+    "supplier_pattern",
+    "additional_filters"
+  ],
+  "fields": [
+    {
+      "fieldname": "category_name",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Nom de Catégorie",
+      "reqd": 1
+    },
+    {
+      "fieldname": "category_path",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Chemin Catégorie",
+      "placeholder": "Combustibles/Carburants/GNR",
+      "reqd": 1
+    },
+    {
+      "fieldname": "column_break_1",
+      "fieldtype": "Column Break"
+    },
+    {
+      "default": "1",
+      "fieldname": "is_active",
+      "fieldtype": "Check",
+      "in_list_view": 1,
+      "label": "Actif"
+    },
+    {
+      "default": "10",
+      "fieldname": "priority",
+      "fieldtype": "Int",
+      "in_list_view": 1,
+      "label": "Priorité",
+      "description": "Plus la valeur est faible, plus la priorité est élevée"
+    },
+    {
+      "fieldname": "section_break_1",
+      "fieldtype": "Section Break",
+      "label": "Conditions de Correspondance"
+    },
+    {
+      "fieldname": "item_group_pattern",
+      "fieldtype": "Data",
+      "label": "Pattern Groupe Article",
+      "description": "Ex: *Combustible*, Carburants, *Fioul*"
+    },
+    {
+      "fieldname": "item_code_pattern",
+      "fieldtype": "Data",
+      "label": "Pattern Code Article",
+      "description": "Ex: GNR*, *GAZOLE*, FIOUL*"
+    },
+    {
+      "fieldname": "item_name_pattern",
+      "fieldtype": "Data",
+      "label": "Pattern Nom Article",
+      "description": "Ex: *Gazole*, *AdBlue*"
+    },
+    {
+      "fieldname": "column_break_2",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "brand_pattern",
+      "fieldtype": "Data",
+      "label": "Pattern Marque",
+      "description": "Ex: Total*, Shell*"
+    },
+    {
+      "fieldname": "supplier_pattern",
+      "fieldtype": "Data",
+      "label": "Pattern Fournisseur",
+      "description": "Ex: *Petrole*, *Energy*"
+    },
+    {
+      "fieldname": "additional_filters",
+      "fieldtype": "Small Text",
+      "label": "Filtres Additionnels (JSON)",
+      "description": "Conditions supplémentaires en format JSON"
+    }
+  ],
+  "is_child_table": 1,
+  "module": "GNR Compliance",
+  "name": "GNR Category Rule"
+}
