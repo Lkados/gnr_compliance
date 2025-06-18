@@ -1,0 +1,69 @@
+{
+  "doctype": "DocType",
+  "name": "Mouvement GNR",
+  "module": "GNR Compliance",
+  "is_child_table": 1,
+  "fields": [
+    {
+      "fieldname": "date_mouvement",
+      "fieldtype": "Date",
+      "label": "Date Mouvement",
+      "reqd": 1
+    },
+    {
+      "fieldname": "type_mouvement",
+      "fieldtype": "Select",
+      "options": "Entrée Stock\nSortie Vente\nSortie Usage Propre\nRégularisation",
+      "reqd": 1
+    },
+    {
+      "fieldname": "reference_document",
+      "fieldtype": "Dynamic Link",
+      "options": "reference_doctype",
+      "label": "Document de Référence"
+    },
+    {
+      "fieldname": "reference_doctype",
+      "fieldtype": "Link",
+      "options": "DocType",
+      "label": "Type Document"
+    },
+    {
+      "fieldname": "client_code",
+      "fieldtype": "Link",
+      "options": "Customer",
+      "label": "Code Client"
+    },
+    {
+      "fieldname": "volume_hl",
+      "fieldtype": "Float",
+      "label": "Volume (hL)",
+      "precision": 3,
+      "reqd": 1
+    },
+    {
+      "fieldname": "tarif_accise",
+      "fieldtype": "Select",
+      "options": "24.81\n3.86",
+      "label": "Tarif Accise (€/hL)",
+      "reqd": 1
+    },
+    {
+      "fieldname": "montant_accise",
+      "fieldtype": "Currency",
+      "label": "Montant Accise (€)",
+      "read_only": 1
+    },
+    {
+      "fieldname": "usage_type",
+      "fieldtype": "Select",
+      "options": "Agricole\nForestier\nBTP\nIndustriel\nAutre",
+      "label": "Type d'Usage"
+    },
+    {
+      "fieldname": "attestation_valide",
+      "fieldtype": "Check",
+      "label": "Attestation Valide"
+    }
+  ]
+}

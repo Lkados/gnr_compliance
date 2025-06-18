@@ -1,0 +1,76 @@
+{
+  "doctype": "DocType",
+  "name": "Declaration Trimestrielle",
+  "module": "GNR Compliance",
+  "is_submittable": 1,
+  "track_changes": 1,
+  "fields": [
+    {
+      "fieldname": "period_start",
+      "fieldtype": "Date",
+      "label": "Début Période",
+      "reqd": 1
+    },
+    {
+      "fieldname": "period_end",
+      "fieldtype": "Date",
+      "label": "Fin Période",
+      "reqd": 1
+    },
+    {
+      "fieldname": "declaration_type",
+      "fieldtype": "Select",
+      "options": "Trimestrielle\nMensuelle\nRégularisation",
+      "default": "Trimestrielle",
+      "reqd": 1
+    },
+    {
+      "fieldname": "code_cana",
+      "fieldtype": "Data",
+      "label": "Code CANA",
+      "default": "U820",
+      "reqd": 1
+    },
+    {
+      "fieldname": "status",
+      "fieldtype": "Select",
+      "options": "Brouillon\nEn Validation\nApprouvée\nTransmise\nRejetée",
+      "default": "Brouillon"
+    },
+    {
+      "fieldname": "mouvements_gnr",
+      "fieldtype": "Table",
+      "options": "Mouvement GNR",
+      "label": "Mouvements GNR"
+    },
+    {
+      "fieldname": "total_volume_hl",
+      "fieldtype": "Float",
+      "label": "Volume Total (hL)",
+      "precision": 3,
+      "read_only": 1
+    },
+    {
+      "fieldname": "total_accise_euro",
+      "fieldtype": "Currency",
+      "label": "Total Accise (€)",
+      "read_only": 1
+    },
+    {
+      "fieldname": "export_xml",
+      "fieldtype": "Attach",
+      "label": "Export XML DGDDI"
+    },
+    {
+      "fieldname": "validation_date",
+      "fieldtype": "Datetime",
+      "label": "Date Validation"
+    },
+    {
+      "fieldname": "validator",
+      "fieldtype": "Link",
+      "options": "User",
+      "label": "Validateur"
+    }
+  ]
+}
