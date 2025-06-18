@@ -1,13 +1,17 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
+# ==========================================
+# FICHIER: hooks.py - Configuration Principale
+# ==========================================
+
+from __future__ import annotations
+from typing import Dict, List, Any
 
 app_name = "gnr_compliance"
 app_title = "Conformité GNR"
 app_publisher = "Mohamed Kachtit"
-app_description = "Application de conformité réglementaire GNR"
+app_description = "Application de conformité réglementaire GNR avec détection automatique"
 app_icon = "octicon octicon-law"
 app_color = "#2e8b57"
-app_version = "0.0.1"  # Version définie directement
+app_version = "1.0.0"
 
 # Configuration après installation
 after_install = "gnr_compliance.setup.install.after_install"
@@ -26,7 +30,6 @@ doc_events = {
         "on_submit": "gnr_compliance.integrations.stock.capture_mouvement_stock",
         "on_cancel": "gnr_compliance.integrations.stock.annuler_mouvement_stock"
     },
-    # Détection automatique des catégories
     "Item": {
         "validate": "gnr_compliance.utils.category_detector.detect_gnr_category",
         "after_insert": "gnr_compliance.utils.category_detector.log_category_assignment"
@@ -40,33 +43,84 @@ doctype_js = {
     "Stock Entry": "public/js/stock_entry_gnr.js"
 }
 
-# === Champs personnalisés pour détection automatique ===
+# === Champs personnalisés unifiés ===
 custom_fields = {
     "Item": [
+        {
+            "fieldname": "gnr_section",
+            "label": "Configuration GNR",
+            "fieldtype": "Section Break",
+            "insert_after": "item_group",
+            "collapsible": 1
+        },
+        {
+            "fieldname": "is_gnr_tracked",
+            "label": "Article GNR Tracké",
+            "fieldtype": "Check",
+            "default": "0",
+            "insert_after": "gnr_section"
+        },
         {
             "fieldname": "gnr_tracked_category",
             "label": "Catégorie GNR",
             "fieldtype": "Data",
             "read_only": 1,
-            "insert_after": "item_group",
-            "translatable": 0
+            "depends_on": "is_gnr_tracked",
+            "insert_after": "is_gnr_tracked"
         },
         {
-            "fieldname": "is_gnr_tracked",
-            "label": "Article GNR",
-            "fieldtype": "Check",
-            "default": "0",
+            "fieldname": "gnr_tax_rate",
+            "label": "Taux Taxe GNR (€/hL)",
+            "fieldtype": "Currency",
+            "depends_on": "is_gnr_tracked",
             "insert_after": "gnr_tracked_category"
+        },
+        {
+            "fieldname": "gnr_column_break",
+            "fieldtype": "Column Break",
+            "insert_after": "gnr_tax_rate"
+        },
+        {
+            "fieldname": "gnr_auto_assigned",
+            "label": "Assignation Automatique",
+            "fieldtype": "Check",
+            "read_only": 1,
+            "depends_on": "is_gnr_tracked",
+            "insert_after": "gnr_column_break"
+        },
+        {
+            "fieldname": "gnr_last_updated",
+            "label": "Dernière MAJ Catégorie",
+            "fieldtype": "Datetime",
+            "read_only": 1,
+            "depends_on": "is_gnr_tracked",
+            "insert_after": "gnr_auto_assigned"
         }
     ],
     "Stock Entry": [
+        {
+            "fieldname": "gnr_processing_section",
+            "label": "Traitement GNR",
+            "fieldtype": "Section Break",
+            "insert_after": "posting_time",
+            "collapsible": 1,
+            "collapsible_depends_on": "gnr_items_detected"
+        },
+        {
+            "fieldname": "gnr_items_detected",
+            "label": "Articles GNR Détectés",
+            "fieldtype": "Int",
+            "read_only": 1,
+            "default": "0",
+            "insert_after": "gnr_processing_section"
+        },
         {
             "fieldname": "gnr_categories_processed",
             "label": "Catégories GNR Traitées",
             "fieldtype": "Check",
             "default": "0",
-            "hidden": 1,
-            "insert_after": "posting_time"
+            "read_only": 1,
+            "insert_after": "gnr_items_detected"
         }
     ]
 }
@@ -77,10 +131,28 @@ fixtures = [
         "dt": "Custom Field",
         "filters": [
             ["name", "in", [
-                "Item-gnr_tracked_category",
+                "Item-gnr_section",
                 "Item-is_gnr_tracked",
+                "Item-gnr_tracked_category",
+                "Item-gnr_tax_rate",
+                "Item-gnr_column_break",
+                "Item-gnr_auto_assigned",
+                "Item-gnr_last_updated",
+                "Stock Entry-gnr_processing_section",
+                "Stock Entry-gnr_items_detected",
                 "Stock Entry-gnr_categories_processed"
             ]]
         ]
     }
 ]
+
+# === Scheduled Tasks ===
+scheduler_events = {
+    "hourly": [
+        "gnr_compliance.utils.cache_manager.refresh_category_cache"
+    ],
+    "daily": [
+        "gnr_compliance.utils.category_detector.process_pending_categorization",
+        "gnr_compliance.utils.movement_tracker.process_pending_movements"
+    ]
+}
