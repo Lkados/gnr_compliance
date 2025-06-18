@@ -1,7 +1,13 @@
 # gnr_compliance/doctype/mouvement_gnr/mouvement_gnr.py
+
 import frappe
 from frappe.model.document import Document
-from frappe.utils import now_datetime, getdate, get_quarter
+from frappe.utils import now_datetime, getdate
+
+def get_quarter(date):
+    """Retourne le numéro du trimestre (1 à 4) pour une date donnée"""
+    date = getdate(date)
+    return (date.month - 1) // 3 + 1
 
 class MouvementGNR(Document):
     def validate(self):
