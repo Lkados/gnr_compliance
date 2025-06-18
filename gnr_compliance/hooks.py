@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
-from . import __version__ as app_version
 
 app_name = "gnr_compliance"
 app_title = "Conformité GNR"
@@ -8,7 +7,7 @@ app_publisher = "Mohamed Kachtit"
 app_description = "Application de conformité réglementaire GNR"
 app_icon = "octicon octicon-law"
 app_color = "#2e8b57"
-app_version = __version__
+app_version = "0.0.1"  # Version définie directement
 
 # Configuration après installation
 after_install = "gnr_compliance.setup.install.after_install"
@@ -32,21 +31,6 @@ doc_events = {
         "validate": "gnr_compliance.utils.category_detector.detect_gnr_category",
         "after_insert": "gnr_compliance.utils.category_detector.log_category_assignment"
     }
-}
-
-# === Tâches programmées (SIMPLIFIÉES) ===
-scheduler_events = {
-    # Commenté temporairement les tâches manquantes
-    # "monthly": [
-    #     "gnr_compliance.tasks.generer_declaration_mensuelle"
-    # ],
-    # "daily": [
-    #     "gnr_compliance.tasks.verifier_echeances_declaration",
-    #     "gnr_compliance.utils.cache_manager.refresh_category_cache"
-    # ],
-    # "hourly": [
-    #     "gnr_compliance.utils.category_detector.process_pending_categorization"
-    # ]
 }
 
 # === Scripts personnalisés ===
