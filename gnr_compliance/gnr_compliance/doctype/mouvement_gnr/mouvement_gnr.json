@@ -141,7 +141,7 @@
  "index_web_pages_for_search": 1,
  "is_submittable": 1,
  "links": [],
- "modified": "2025-06-19 15:11:02.520984",
+ "modified": "2025-06-19 15:32:54.052621",
  "modified_by": "Administrator",
  "module": "Gnr Compliance",
  "name": "Mouvement GNR",
@@ -162,17 +162,13 @@
    "write": 1
   },
   {
-   "create": 1,
-   "delete": 1,
    "email": 1,
    "export": 1,
    "print": 1,
    "read": 1,
    "report": 1,
-   "role": "GNR Manager",
-   "share": 1,
-   "submit": 1,
-   "write": 1
+   "role": "All",
+   "share": 1
   }
  ],
  "row_format": "Dynamic",
