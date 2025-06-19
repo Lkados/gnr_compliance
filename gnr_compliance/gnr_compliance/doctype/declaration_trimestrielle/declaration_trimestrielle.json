@@ -1,76 +1,144 @@
 {
-  "doctype": "DocType",
-  "name": "Declaration Trimestrielle",
-  "module": "GNR Compliance",
-  "is_submittable": 1,
-  "track_changes": 1,
-  "fields": [
-    {
-      "fieldname": "period_start",
-      "fieldtype": "Date",
-      "label": "Début Période",
-      "reqd": 1
-    },
-    {
-      "fieldname": "period_end",
-      "fieldtype": "Date",
-      "label": "Fin Période",
-      "reqd": 1
-    },
-    {
-      "fieldname": "declaration_type",
-      "fieldtype": "Select",
-      "options": "Trimestrielle\nMensuelle\nRégularisation",
-      "default": "Trimestrielle",
-      "reqd": 1
-    },
-    {
-      "fieldname": "code_cana",
-      "fieldtype": "Data",
-      "label": "Code CANA",
-      "default": "U820",
-      "reqd": 1
-    },
-    {
-      "fieldname": "status",
-      "fieldtype": "Select",
-      "options": "Brouillon\nEn Validation\nApprouvée\nTransmise\nRejetée",
-      "default": "Brouillon"
-    },
-    {
-      "fieldname": "mouvements_gnr",
-      "fieldtype": "Table",
-      "options": "Mouvement GNR",
-      "label": "Mouvements GNR"
-    },
-    {
-      "fieldname": "total_volume_hl",
-      "fieldtype": "Float",
-      "label": "Volume Total (hL)",
-      "precision": 3,
-      "read_only": 1
-    },
-    {
-      "fieldname": "total_accise_euro",
-      "fieldtype": "Currency",
-      "label": "Total Accise (€)",
-      "read_only": 1
-    },
-    {
-      "fieldname": "export_xml",
-      "fieldtype": "Attach",
-      "label": "Export XML DGDDI"
-    },
-    {
-      "fieldname": "validation_date",
-      "fieldtype": "Datetime",
-      "label": "Date Validation"
-    },
-    {
-      "fieldname": "validator",
-      "fieldtype": "Link",
-      "options": "User",
-      "label": "Validateur"
-    }
-  ]
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "format:DECL-{trimestre}-{annee}",
+ "creation": "2025-06-19 15:11:15.776542",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "trimestre",
+  "annee",
+  "date_debut",
+  "date_fin",
+  "statut",
+  "stock_debut_trimestre",
+  "total_entrees",
+  "total_sorties",
+  "stock_fin_trimestre",
+  "observations",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "trimestre",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Trimestre",
+   "options": "1\n2\n3\n4",
+   "reqd": 1
+  },
+  {
+   "fieldname": "annee",
+   "fieldtype": "Int",
+   "in_list_view": 1,
+   "label": "Ann\u00e9e",
+   "reqd": 1
+  },
+  {
+   "fieldname": "date_debut",
+   "fieldtype": "Date",
+   "label": "Date D\u00e9but",
+   "reqd": 1
+  },
+  {
+   "fieldname": "date_fin",
+   "fieldtype": "Date",
+   "label": "Date Fin",
+   "reqd": 1
+  },
+  {
+   "default": "Brouillon",
+   "fieldname": "statut",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Statut",
+   "options": "Brouillon\nSoumise\nValid\u00e9e"
+  },
+  {
+   "fieldname": "stock_debut_trimestre",
+   "fieldtype": "Float",
+   "label": "Stock D\u00e9but (hL)",
+   "precision": "3"
+  },
+  {
+   "fieldname": "total_entrees",
+   "fieldtype": "Float",
+   "label": "Total Entr\u00e9es (hL)",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "total_sorties",
+   "fieldtype": "Float",
+   "label": "Total Sorties (hL)",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "stock_fin_trimestre",
+   "fieldtype": "Float",
+   "label": "Stock Fin (hL)",
+   "precision": "3",
+   "read_only": 1
+  },
+  {
+   "fieldname": "observations",
+   "fieldtype": "Text",
+   "label": "Observations"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Declaration Trimestrielle",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2025-06-19 15:11:15.776542",
+ "modified_by": "Administrator",
+ "module": "Gnr Compliance",
+ "name": "Declaration Trimestrielle",
+ "naming_rule": "Expression",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "GNR Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
 }

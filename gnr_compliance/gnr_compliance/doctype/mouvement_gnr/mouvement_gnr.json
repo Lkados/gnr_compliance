@@ -1,69 +1,183 @@
 {
-  "doctype": "DocType",
-  "name": "Mouvement GNR",
-  "module": "GNR Compliance",
-  "is_child_table": 1,
-  "fields": [
-    {
-      "fieldname": "date_mouvement",
-      "fieldtype": "Date",
-      "label": "Date Mouvement",
-      "reqd": 1
-    },
-    {
-      "fieldname": "type_mouvement",
-      "fieldtype": "Select",
-      "options": "Entrée Stock\nSortie Vente\nSortie Usage Propre\nRégularisation",
-      "reqd": 1
-    },
-    {
-      "fieldname": "reference_document",
-      "fieldtype": "Dynamic Link",
-      "options": "reference_doctype",
-      "label": "Document de Référence"
-    },
-    {
-      "fieldname": "reference_doctype",
-      "fieldtype": "Link",
-      "options": "DocType",
-      "label": "Type Document"
-    },
-    {
-      "fieldname": "client_code",
-      "fieldtype": "Link",
-      "options": "Customer",
-      "label": "Code Client"
-    },
-    {
-      "fieldname": "volume_hl",
-      "fieldtype": "Float",
-      "label": "Volume (hL)",
-      "precision": 3,
-      "reqd": 1
-    },
-    {
-      "fieldname": "tarif_accise",
-      "fieldtype": "Select",
-      "options": "24.81\n3.86",
-      "label": "Tarif Accise (€/hL)",
-      "reqd": 1
-    },
-    {
-      "fieldname": "montant_accise",
-      "fieldtype": "Currency",
-      "label": "Montant Accise (€)",
-      "read_only": 1
-    },
-    {
-      "fieldname": "usage_type",
-      "fieldtype": "Select",
-      "options": "Agricole\nForestier\nBTP\nIndustriel\nAutre",
-      "label": "Type d'Usage"
-    },
-    {
-      "fieldname": "attestation_valide",
-      "fieldtype": "Check",
-      "label": "Attestation Valide"
-    }
-  ]
+ "actions": [],
+ "allow_rename": 1,
+ "autoname": "naming_series:",
+ "creation": "2025-06-19 15:11:02.520984",
+ "doctype": "DocType",
+ "editable_grid": 1,
+ "engine": "InnoDB",
+ "field_order": [
+  "naming_series",
+  "type_mouvement",
+  "date_mouvement",
+  "code_produit",
+  "quantite",
+  "prix_unitaire",
+  "taux_gnr",
+  "montant_taxe_gnr",
+  "client",
+  "fournisseur",
+  "reference_document",
+  "reference_name",
+  "categorie_gnr",
+  "trimestre",
+  "annee",
+  "semestre",
+  "amended_from"
+ ],
+ "fields": [
+  {
+   "fieldname": "naming_series",
+   "fieldtype": "Select",
+   "label": "S\u00e9rie de Nommage",
+   "options": "MGNR-.YYYY.-",
+   "reqd": 1
+  },
+  {
+   "fieldname": "type_mouvement",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Type de Mouvement",
+   "options": "Vente\nAchat\nStock\nTransfert",
+   "reqd": 1
+  },
+  {
+   "default": "Today",
+   "fieldname": "date_mouvement",
+   "fieldtype": "Date",
+   "in_list_view": 1,
+   "label": "Date Mouvement",
+   "reqd": 1
+  },
+  {
+   "fieldname": "code_produit",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "Code Produit",
+   "options": "Item",
+   "reqd": 1
+  },
+  {
+   "fieldname": "quantite",
+   "fieldtype": "Float",
+   "label": "Quantit\u00e9",
+   "precision": "3",
+   "reqd": 1
+  },
+  {
+   "fieldname": "prix_unitaire",
+   "fieldtype": "Currency",
+   "label": "Prix Unitaire"
+  },
+  {
+   "fieldname": "taux_gnr",
+   "fieldtype": "Currency",
+   "label": "Taux GNR (\u20ac/hL)"
+  },
+  {
+   "fieldname": "montant_taxe_gnr",
+   "fieldtype": "Currency",
+   "label": "Montant Taxe GNR",
+   "read_only": 1
+  },
+  {
+   "fieldname": "client",
+   "fieldtype": "Link",
+   "label": "Client",
+   "options": "Customer"
+  },
+  {
+   "fieldname": "fournisseur",
+   "fieldtype": "Link",
+   "label": "Fournisseur",
+   "options": "Supplier"
+  },
+  {
+   "fieldname": "reference_document",
+   "fieldtype": "Link",
+   "label": "Document R\u00e9f\u00e9rence",
+   "options": "DocType"
+  },
+  {
+   "fieldname": "reference_name",
+   "fieldtype": "Dynamic Link",
+   "label": "Nom R\u00e9f\u00e9rence",
+   "options": "reference_document"
+  },
+  {
+   "fieldname": "categorie_gnr",
+   "fieldtype": "Data",
+   "label": "Cat\u00e9gorie GNR"
+  },
+  {
+   "fieldname": "trimestre",
+   "fieldtype": "Select",
+   "label": "Trimestre",
+   "options": "1\n2\n3\n4"
+  },
+  {
+   "fieldname": "annee",
+   "fieldtype": "Int",
+   "label": "Ann\u00e9e"
+  },
+  {
+   "fieldname": "semestre",
+   "fieldtype": "Select",
+   "label": "Semestre",
+   "options": "1\n2"
+  },
+  {
+   "fieldname": "amended_from",
+   "fieldtype": "Link",
+   "label": "Amended From",
+   "no_copy": 1,
+   "options": "Mouvement GNR",
+   "print_hide": 1,
+   "read_only": 1,
+   "search_index": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "is_submittable": 1,
+ "links": [],
+ "modified": "2025-06-19 15:11:02.520984",
+ "modified_by": "Administrator",
+ "module": "Gnr Compliance",
+ "name": "Mouvement GNR",
+ "naming_rule": "By \"Naming Series\" field",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "GNR Manager",
+   "share": 1,
+   "submit": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
 }
