@@ -20,19 +20,19 @@ after_install = "gnr_compliance.setup.install.after_install"
 doc_events = {
     "Sales Invoice": {
         "on_submit": "gnr_compliance.integrations.sales.capture_vente_gnr",
-        "on_cancel": "gnr_compliance.integrations.sales.annuler_vente_gnr"
+        "on_cancel": "gnr_compliance.integrations.sales.cancel_vente_gnr"
     },
     "Purchase Invoice": {
         "on_submit": "gnr_compliance.integrations.sales.capture_achat_gnr",
-        "on_cancel": "gnr_compliance.integrations.sales.annuler_achat_gnr"
+        "on_cancel": "gnr_compliance.integrations.sales.cancel_achat_gnr"
     },
     "Stock Entry": {
         "on_submit": "gnr_compliance.integrations.stock.capture_mouvement_stock",
-        "on_cancel": "gnr_compliance.integrations.stock.annuler_mouvement_stock"
+        "on_cancel": "gnr_compliance.integrations.stock.cancel_mouvement_stock"
     },
     "Item": {
         "validate": "gnr_compliance.utils.category_detector.detect_gnr_category",
-        "after_insert": "gnr_compliance.utils.category_detector.log_category_assignment"
+        "on_update": "gnr_compliance.utils.category_detector.update_gnr_tracking"
     }
 }
 
@@ -148,11 +148,15 @@ fixtures = [
 
 # === Scheduled Tasks ===
 scheduler_events = {
-    "hourly": [
-        "gnr_compliance.utils.cache_manager.refresh_category_cache"
-    ],
     "daily": [
-        "gnr_compliance.utils.category_detector.process_pending_categorization",
-        "gnr_compliance.utils.movement_tracker.process_pending_movements"
+        "gnr_compliance.tasks.daily_gnr_sync",
+        "gnr_compliance.tasks.check_gnr_compliance"
+    ],
+    "weekly": [
+        "gnr_compliance.tasks.weekly_gnr_report"
+    ],
+    "monthly": [
+        "gnr_compliance.tasks.monthly_gnr_summary",
+        "gnr_compliance.tasks.generate_quarterly_reports"
     ]
 }

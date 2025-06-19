@@ -1,226 +1,241 @@
-
-from __future__ import annotations
 import frappe
-from frappe.utils import flt, now_datetime
-from gnr_compliance.utils.category_detector import is_gnr_tracked_item
-from gnr_compliance.utils.cache_manager import get_cached_item_status
-from typing import List, Dict, Any
-import logging
+from frappe import _
 
-logger = logging.getLogger(__name__)
-
-def capture_vente_gnr(doc: Any, method: str) -> None:
+def capture_vente_gnr(doc, method):
     """
     Capture automatique des ventes GNR depuis Sales Invoice
     
     Args:
         doc: Document Sales Invoice
-        method: Méthode d'appel
+        method: Méthode appelée (on_submit, etc.)
     """
+    
+    def get_quarter_from_date(date):
+        """Calcule le trimestre à partir d'une date"""
+        month = date.month
+        if month <= 3: 
+            return "1"
+        elif month <= 6: 
+            return "2"
+        elif month <= 9: 
+            return "3"
+        else: 
+            return "4"
+    
+    def get_gnr_tax_rate(gnr_category):
+        """Retourne le taux de taxe GNR selon la catégorie"""
+        rates = {
+            "fioul domestique": 1.77,
+            "gasoil": 3.86,
+            "essence": 6.83,
+            "gpl": 2.84
+        }
+        
+        category_lower = gnr_category.lower()
+        for key, rate in rates.items():
+            if key in category_lower:
+                return rate
+        
+        return 1.77  # Taux par défaut pour fioul domestique
+    
     try:
-        produits_gnr = []
+        movements_created = 0
         
         for item in doc.items:
-            if is_gnr_tracked_item(item.item_code):
-                produits_gnr.append(item)
-        
-        if produits_gnr:
-            for item in produits_gnr:
-                _create_gnr_sale_movement(doc, item)
+            # Vérifier si l'article est tracké GNR
+            is_gnr = frappe.get_value("Item", item.item_code, "is_gnr_tracked")
+            
+            if is_gnr:
+                # Vérifier si mouvement déjà créé
+                existing = frappe.get_all("Mouvement GNR",
+                                        filters={
+                                            "reference_document": "Sales Invoice",
+                                            "reference_name": doc.name,
+                                            "code_produit": item.item_code
+                                        })
                 
-            logger.info(f"Vente GNR capturée: {len(produits_gnr)} articles dans {doc.name}")
+                if not existing:
+                    # Obtenir catégorie GNR
+                    gnr_category = frappe.get_value("Item", item.item_code, "gnr_tracked_category") or "Fioul Domestique"
+                    
+                    # Calculer taux GNR
+                    taux_gnr = get_gnr_tax_rate(gnr_category)
+                    
+                    # Créer le mouvement GNR
+                    mouvement = frappe.new_doc("Mouvement GNR")
+                    mouvement.update({
+                        "type_mouvement": "Vente",
+                        "date_mouvement": doc.posting_date,
+                        "code_produit": item.item_code,
+                        "quantite": item.qty,
+                        "prix_unitaire": item.rate,
+                        "client": doc.customer,
+                        "reference_document": "Sales Invoice",
+                        "reference_name": doc.name,
+                        "categorie_gnr": gnr_category,
+                        "trimestre": get_quarter_from_date(doc.posting_date),
+                        "annee": doc.posting_date.year,
+                        "taux_gnr": taux_gnr,
+                        "montant_taxe_gnr": item.qty * taux_gnr
+                    })
+                    
+                    mouvement.insert(ignore_permissions=True)
+                    movements_created += 1
+                    
+                    # Log pour debug
+                    frappe.logger().info(f"Mouvement GNR créé: {mouvement.name} pour facture {doc.name}")
+        
+        if movements_created > 0:
+            frappe.msgprint(
+                f"✅ {movements_created} mouvement(s) GNR créé(s) automatiquement",
+                title="GNR Compliance",
+                indicator="green"
+            )
             
     except Exception as e:
-        logger.error(f"Erreur capture vente GNR {doc.name}: {e}")
-        frappe.log_error(f"Erreur capture vente GNR: {str(e)}")
+        frappe.log_error(f"Erreur capture GNR pour facture {doc.name}: {str(e)}")
+        frappe.throw(_("Erreur lors de la création des mouvements GNR: {0}").format(str(e)))
 
-def _create_gnr_sale_movement(invoice_doc: Any, item: Any) -> None:
-    """
-    Crée un mouvement GNR pour une vente
-    
-    Args:
-        invoice_doc: Document Sales Invoice
-        item: Ligne d'article de la facture
-    """
-    try:
-        # Récupérer les données GNR de l'article
-        item_status = get_cached_item_status(item.item_code)
-        
-        if not item_status.get('is_tracked'):
-            return
-            
-        # Créer un log de mouvement
-        log_entry = frappe.new_doc("GNR Movement Log")
-        log_entry.update({
-            'reference_doctype': 'Sales Invoice',
-            'reference_name': invoice_doc.name,
-            'item_code': item.item_code,
-            'gnr_category': item_status.get('category'),
-            'movement_type': 'Sale',
-            'quantity': flt(item.qty),
-            'amount': flt(item.amount),
-            'user': frappe.session.user,
-            'timestamp': now_datetime(),
-            'details': json.dumps({
-                'customer': invoice_doc.customer,
-                'customer_name': invoice_doc.customer_name,
-                'rate': item.rate,
-                'warehouse': item.warehouse
-            })
-        })
-        log_entry.insert(ignore_permissions=True)
-        
-        # Créer un mouvement GNR si le DocType existe
-        if frappe.db.exists("DocType", "Mouvement GNR"):
-            mouvement_gnr = frappe.new_doc("Mouvement GNR")
-            mouvement_gnr.update({
-                "type_mouvement": "Vente",
-                "date_mouvement": invoice_doc.posting_date,
-                "reference_document": invoice_doc.doctype,
-                "reference_name": invoice_doc.name,
-                "code_produit": item.item_code,
-                "designation_produit": item.item_name,
-                "quantite": flt(item.qty),
-                "prix_unitaire": flt(item.rate),
-                "client": invoice_doc.customer,
-                "code_client": invoice_doc.customer,
-                "taux_gnr": flt(item_status.get('tax_rate', 0)),
-                "categorie_gnr": item_status.get('category')
-            })
-            
-            # Calculer les taxes
-            if mouvement_gnr.quantite and mouvement_gnr.taux_gnr:
-                mouvement_gnr.montant_taxe_gnr = mouvement_gnr.quantite * mouvement_gnr.taux_gnr
-            
-            mouvement_gnr.insert(ignore_permissions=True)
-            mouvement_gnr.submit()
-            
-    except Exception as e:
-        logger.error(f"Erreur création mouvement vente GNR pour {item.item_code}: {e}")
 
-def capture_achat_gnr(doc: Any, method: str) -> None:
+def capture_achat_gnr(doc, method):
     """
     Capture automatique des achats GNR depuis Purchase Invoice
     
     Args:
         doc: Document Purchase Invoice
-        method: Méthode d'appel
+        method: Méthode appelée (on_submit, etc.)
     """
+    
+    def get_quarter_from_date(date):
+        """Calcule le trimestre à partir d'une date"""
+        month = date.month
+        if month <= 3: return "1"
+        elif month <= 6: return "2"
+        elif month <= 9: return "3"
+        else: return "4"
+    
     try:
-        produits_gnr = []
+        movements_created = 0
         
         for item in doc.items:
-            if is_gnr_tracked_item(item.item_code):
-                produits_gnr.append(item)
-        
-        if produits_gnr:
-            for item in produits_gnr:
-                _create_gnr_purchase_movement(doc, item)
+            # Vérifier si l'article est tracké GNR
+            is_gnr = frappe.get_value("Item", item.item_code, "is_gnr_tracked")
+            
+            if is_gnr:
+                # Vérifier si mouvement déjà créé
+                existing = frappe.get_all("Mouvement GNR",
+                                        filters={
+                                            "reference_document": "Purchase Invoice",
+                                            "reference_name": doc.name,
+                                            "code_produit": item.item_code
+                                        })
                 
-            logger.info(f"Achat GNR capturé: {len(produits_gnr)} articles dans {doc.name}")
+                if not existing:
+                    # Obtenir catégorie GNR
+                    gnr_category = frappe.get_value("Item", item.item_code, "gnr_tracked_category") or "Non classé"
+                    
+                    # Créer le mouvement GNR
+                    mouvement = frappe.new_doc("Mouvement GNR")
+                    mouvement.update({
+                        "type_mouvement": "Achat",
+                        "date_mouvement": doc.posting_date,
+                        "code_produit": item.item_code,
+                        "quantite": item.qty,
+                        "prix_unitaire": item.rate,
+                        "fournisseur": doc.supplier,
+                        "reference_document": "Purchase Invoice",
+                        "reference_name": doc.name,
+                        "categorie_gnr": gnr_category,
+                        "trimestre": get_quarter_from_date(doc.posting_date),
+                        "annee": doc.posting_date.year
+                    })
+                    
+                    mouvement.insert(ignore_permissions=True)
+                    movements_created += 1
+                    
+                    frappe.logger().info(f"Mouvement GNR achat créé: {mouvement.name} pour facture {doc.name}")
+        
+        if movements_created > 0:
+            frappe.msgprint(
+                f"✅ {movements_created} mouvement(s) GNR achat créé(s) automatiquement",
+                title="GNR Compliance",
+                indicator="green"
+            )
             
     except Exception as e:
-        logger.error(f"Erreur capture achat GNR {doc.name}: {e}")
+        frappe.log_error(f"Erreur capture GNR achat pour facture {doc.name}: {str(e)}")
+        frappe.msgprint(_("Erreur lors de la création des mouvements GNR achat: {0}").format(str(e)))
 
-def _create_gnr_purchase_movement(invoice_doc: Any, item: Any) -> None:
+
+def cancel_vente_gnr(doc, method):
     """
-    Crée un mouvement GNR pour un achat
+    Annule les mouvements GNR lors de l'annulation d'une facture de vente
     
     Args:
-        invoice_doc: Document Purchase Invoice
-        item: Ligne d'article de la facture
+        doc: Document Sales Invoice annulé
+        method: Méthode appelée (on_cancel)
     """
     try:
-        item_status = get_cached_item_status(item.item_code)
+        # Trouver les mouvements GNR liés à cette facture
+        movements = frappe.get_all("Mouvement GNR",
+                                  filters={
+                                      "reference_document": "Sales Invoice",
+                                      "reference_name": doc.name,
+                                      "docstatus": ["!=", 2]  # Pas déjà annulés
+                                  })
         
-        if not item_status.get('is_tracked'):
-            return
-            
-        # Créer un log de mouvement
-        log_entry = frappe.new_doc("GNR Movement Log")
-        log_entry.update({
-            'reference_doctype': 'Purchase Invoice',
-            'reference_name': invoice_doc.name,
-            'item_code': item.item_code,
-            'gnr_category': item_status.get('category'),
-            'movement_type': 'Purchase',
-            'quantity': flt(item.qty),
-            'amount': flt(item.amount),
-            'user': frappe.session.user,
-            'timestamp': now_datetime(),
-            'details': json.dumps({
-                'supplier': invoice_doc.supplier,
-                'supplier_name': invoice_doc.supplier_name,
-                'rate': item.rate,
-                'warehouse': item.warehouse
-            })
-        })
-        log_entry.insert(ignore_permissions=True)
+        movements_cancelled = 0
+        for movement in movements:
+            mov_doc = frappe.get_doc("Mouvement GNR", movement.name)
+            if mov_doc.docstatus == 1:  # Si soumis, annuler
+                mov_doc.cancel()
+            else:  # Si brouillon, supprimer
+                mov_doc.delete()
+            movements_cancelled += 1
         
-        # Créer un mouvement GNR si nécessaire
-        if frappe.db.exists("DocType", "Mouvement GNR"):
-            mouvement_gnr = frappe.new_doc("Mouvement GNR")
-            mouvement_gnr.update({
-                "type_mouvement": "Achat",
-                "date_mouvement": invoice_doc.posting_date,
-                "reference_document": invoice_doc.doctype,
-                "reference_name": invoice_doc.name,
-                "code_produit": item.item_code,
-                "designation_produit": item.item_name,
-                "quantite": flt(item.qty),
-                "prix_unitaire": flt(item.rate),
-                "fournisseur": invoice_doc.supplier,
-                "taux_gnr": flt(item_status.get('tax_rate', 0)),
-                "categorie_gnr": item_status.get('category')
-            })
-            
-            mouvement_gnr.insert(ignore_permissions=True)
-            mouvement_gnr.submit()
+        if movements_cancelled > 0:
+            frappe.msgprint(
+                f"✅ {movements_cancelled} mouvement(s) GNR annulé(s)",
+                title="GNR Compliance",
+                indicator="orange"
+            )
             
     except Exception as e:
-        logger.error(f"Erreur création mouvement achat GNR pour {item.item_code}: {e}")
+        frappe.log_error(f"Erreur annulation GNR pour facture {doc.name}: {str(e)}")
 
-def annuler_vente_gnr(doc: Any, method: str) -> None:
-    """Annule les mouvements GNR d'une vente annulée"""
-    _annuler_mouvements_gnr(doc, "Sales Invoice")
 
-def annuler_achat_gnr(doc: Any, method: str) -> None:
-    """Annule les mouvements GNR d'un achat annulé"""
-    _annuler_mouvements_gnr(doc, "Purchase Invoice")
-
-def _annuler_mouvements_gnr(doc: Any, doctype: str) -> None:
+def cancel_achat_gnr(doc, method):
     """
-    Annule les mouvements GNR associés à un document annulé
+    Annule les mouvements GNR lors de l'annulation d'une facture d'achat
     
     Args:
-        doc: Document annulé
-        doctype: Type de document
+        doc: Document Purchase Invoice annulé
+        method: Méthode appelée (on_cancel)
     """
     try:
-        # Annuler les logs
-        logs = frappe.get_all("GNR Movement Log",
-                             filters={
-                                 "reference_doctype": doctype,
-                                 "reference_name": doc.name
-                             })
+        # Trouver les mouvements GNR liés à cette facture
+        movements = frappe.get_all("Mouvement GNR",
+                                  filters={
+                                      "reference_document": "Purchase Invoice",
+                                      "reference_name": doc.name,
+                                      "docstatus": ["!=", 2]  # Pas déjà annulés
+                                  })
         
-        for log in logs:
-            frappe.delete_doc("GNR Movement Log", log.name, ignore_permissions=True)
+        movements_cancelled = 0
+        for movement in movements:
+            mov_doc = frappe.get_doc("Mouvement GNR", movement.name)
+            if mov_doc.docstatus == 1:  # Si soumis, annuler
+                mov_doc.cancel()
+            else:  # Si brouillon, supprimer
+                mov_doc.delete()
+            movements_cancelled += 1
         
-        # Annuler les mouvements GNR
-        if frappe.db.exists("DocType", "Mouvement GNR"):
-            mouvements = frappe.get_all("Mouvement GNR",
-                                       filters={
-                                           "reference_document": doctype,
-                                           "reference_name": doc.name,
-                                           "docstatus": 1
-                                       })
+        if movements_cancelled > 0:
+            frappe.msgprint(
+                f"✅ {movements_cancelled} mouvement(s) GNR achat annulé(s)",
+                title="GNR Compliance",
+                indicator="orange"
+            )
             
-            for mouvement in mouvements:
-                mouvement_doc = frappe.get_doc("Mouvement GNR", mouvement.name)
-                mouvement_doc.cancel()
-        
-        logger.info(f"Mouvements GNR annulés pour {doctype} {doc.name}")
-        
     except Exception as e:
-        logger.error(f"Erreur annulation mouvements GNR pour {doc.name}: {e}")
+        frappe.log_error(f"Erreur annulation GNR achat pour facture {doc.name}: {str(e)}")
