@@ -1,5 +1,6 @@
 import frappe
 from frappe import _
+from frappe.utils import getdate
 
 def capture_vente_gnr(doc, method):
     """
@@ -10,9 +11,13 @@ def capture_vente_gnr(doc, method):
         method: Méthode appelée (on_submit, etc.)
     """
     
-    def get_quarter_from_date(date):
+    def get_quarter_from_date(date_value):
         """Calcule le trimestre à partir d'une date"""
-        month = date.month
+        # Convertir en objet date si c'est une chaîne
+        if isinstance(date_value, str):
+            date_value = getdate(date_value)
+        
+        month = date_value.month
         if month <= 3: 
             return "1"
         elif month <= 6: 
@@ -22,13 +27,23 @@ def capture_vente_gnr(doc, method):
         else: 
             return "4"
     
+    def get_semestre_from_date(date_value):
+        """Calcule le semestre à partir d'une date"""
+        if isinstance(date_value, str):
+            date_value = getdate(date_value)
+        
+        return "1" if date_value.month <= 6 else "2"
+    
     def get_gnr_tax_rate(gnr_category):
         """Retourne le taux de taxe GNR selon la catégorie"""
         rates = {
             "fioul domestique": 1.77,
             "gasoil": 3.86,
             "essence": 6.83,
-            "gpl": 2.84
+            "gpl": 2.84,
+            "gnr": 3.86,
+            "gazole": 3.86,
+            "adblue": 0.00  # AdBlue n'est pas taxé
         }
         
         category_lower = gnr_category.lower()
@@ -40,6 +55,7 @@ def capture_vente_gnr(doc, method):
     
     try:
         movements_created = 0
+        posting_date = getdate(doc.posting_date)  # Convertir une seule fois
         
         for item in doc.items:
             # Vérifier si l'article est tracké GNR
@@ -65,7 +81,7 @@ def capture_vente_gnr(doc, method):
                     mouvement = frappe.new_doc("Mouvement GNR")
                     mouvement.update({
                         "type_mouvement": "Vente",
-                        "date_mouvement": doc.posting_date,
+                        "date_mouvement": posting_date,
                         "code_produit": item.item_code,
                         "quantite": item.qty,
                         "prix_unitaire": item.rate,
@@ -73,8 +89,9 @@ def capture_vente_gnr(doc, method):
                         "reference_document": "Sales Invoice",
                         "reference_name": doc.name,
                         "categorie_gnr": gnr_category,
-                        "trimestre": get_quarter_from_date(doc.posting_date),
-                        "annee": doc.posting_date.year,
+                        "trimestre": get_quarter_from_date(posting_date),
+                        "annee": posting_date.year,
+                        "semestre": get_semestre_from_date(posting_date),
                         "taux_gnr": taux_gnr,
                         "montant_taxe_gnr": item.qty * taux_gnr
                     })
@@ -106,16 +123,27 @@ def capture_achat_gnr(doc, method):
         method: Méthode appelée (on_submit, etc.)
     """
     
-    def get_quarter_from_date(date):
+    def get_quarter_from_date(date_value):
         """Calcule le trimestre à partir d'une date"""
-        month = date.month
+        if isinstance(date_value, str):
+            date_value = getdate(date_value)
+        
+        month = date_value.month
         if month <= 3: return "1"
         elif month <= 6: return "2"
         elif month <= 9: return "3"
         else: return "4"
     
+    def get_semestre_from_date(date_value):
+        """Calcule le semestre à partir d'une date"""
+        if isinstance(date_value, str):
+            date_value = getdate(date_value)
+        
+        return "1" if date_value.month <= 6 else "2"
+    
     try:
         movements_created = 0
+        posting_date = getdate(doc.posting_date)  # Convertir une seule fois
         
         for item in doc.items:
             # Vérifier si l'article est tracké GNR
@@ -138,7 +166,7 @@ def capture_achat_gnr(doc, method):
                     mouvement = frappe.new_doc("Mouvement GNR")
                     mouvement.update({
                         "type_mouvement": "Achat",
-                        "date_mouvement": doc.posting_date,
+                        "date_mouvement": posting_date,
                         "code_produit": item.item_code,
                         "quantite": item.qty,
                         "prix_unitaire": item.rate,
@@ -146,8 +174,9 @@ def capture_achat_gnr(doc, method):
                         "reference_document": "Purchase Invoice",
                         "reference_name": doc.name,
                         "categorie_gnr": gnr_category,
-                        "trimestre": get_quarter_from_date(doc.posting_date),
-                        "annee": doc.posting_date.year
+                        "trimestre": get_quarter_from_date(posting_date),
+                        "annee": posting_date.year,
+                        "semestre": get_semestre_from_date(posting_date)
                     })
                     
                     mouvement.insert(ignore_permissions=True)

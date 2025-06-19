@@ -1,8 +1,9 @@
 from __future__ import annotations
 import frappe
-from frappe.utils import flt, now_datetime
+from frappe.utils import flt, now_datetime, getdate, get_quarter
 from typing import Dict, List, Any, Optional
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,7 @@ def capture_mouvement_stock(doc: Any, method: str) -> None:
         gnr_count = 0
         
         for item in doc.items:
-            # CORRECTION: Utiliser le bon nom de champ
+            # Vérifier si l'article est tracké GNR
             if frappe.get_value("Item", item.item_code, "is_gnr_tracked"):
                 gnr_items.append(item)
                 gnr_count += 1
@@ -65,9 +66,12 @@ def _create_gnr_movement_from_stock(stock_doc: Any, item: Any) -> None:
         # Déterminer le type de mouvement
         movement_type_map = {
             "Material Receipt": "Entrée",
-            "Material Issue": "Sortie",
+            "Material Issue": "Sortie", 
             "Material Transfer": "Transfert"
         }
+        
+        # Convertir la date de posting en objet date
+        posting_date = getdate(stock_doc.posting_date)
         
         # Créer un log de mouvement GNR
         log_entry = frappe.new_doc("GNR Movement Log")
@@ -96,26 +100,33 @@ def _create_gnr_movement_from_stock(stock_doc: Any, item: Any) -> None:
         if frappe.db.exists("DocType", "Mouvement GNR"):
             mouvement_gnr = frappe.new_doc("Mouvement GNR")
             mouvement_gnr.update({
-                "type_mouvement": movement_type_map.get(stock_doc.stock_entry_type, "Mouvement"),
-                "date_mouvement": stock_doc.posting_date,
+                "type_mouvement": movement_type_map.get(stock_doc.stock_entry_type, "Stock"),
+                "date_mouvement": posting_date,
                 "reference_document": stock_doc.doctype,
                 "reference_name": stock_doc.name,
                 "code_produit": item.item_code,
-                "designation_produit": item.item_name or frappe.get_value("Item", item.item_code, "item_name"),
                 "quantite": flt(item.qty),
-                "entrepot_source": item.s_warehouse,
-                "entrepot_destination": item.t_warehouse,
+                "prix_unitaire": flt(item.basic_rate or 0),
                 "taux_gnr": flt(item_gnr_data.gnr_tax_rate or 0),
-                "categorie_gnr": item_gnr_data.gnr_tracked_category
+                "categorie_gnr": item_gnr_data.gnr_tracked_category,
+                "trimestre": str(get_quarter(posting_date)),
+                "annee": posting_date.year,
+                "semestre": "1" if posting_date.month <= 6 else "2"
             })
+            
+            # Calculer le montant de taxe GNR
+            if mouvement_gnr.quantite and mouvement_gnr.taux_gnr:
+                mouvement_gnr.montant_taxe_gnr = mouvement_gnr.quantite * mouvement_gnr.taux_gnr
+            
             mouvement_gnr.insert(ignore_permissions=True)
+            
             if stock_doc.docstatus == 1:
                 mouvement_gnr.submit()
         
     except Exception as e:
         logger.error(f"Erreur création mouvement GNR pour {item.item_code}: {e}")
 
-def annuler_mouvement_stock(doc: Any, method: str) -> None:
+def cancel_mouvement_stock(doc: Any, method: str) -> None:
     """
     Annule les mouvements GNR associés à un mouvement de stock annulé
     
@@ -152,3 +163,100 @@ def annuler_mouvement_stock(doc: Any, method: str) -> None:
         
     except Exception as e:
         logger.error(f"Erreur annulation mouvements GNR pour {doc.name}: {e}")
+
+@frappe.whitelist()
+def get_stock_gnr_summary(from_date: str, to_date: str) -> Dict[str, Any]:
+    """
+    Récupère un résumé des mouvements de stock GNR sur une période
+    
+    Args:
+        from_date: Date de début
+        to_date: Date de fin
+        
+    Returns:
+        Dictionnaire avec le résumé des mouvements
+    """
+    try:
+        # Convertir les dates
+        from_date_obj = getdate(from_date)
+        to_date_obj = getdate(to_date)
+        
+        # Requête pour récupérer les mouvements de stock GNR
+        movements = frappe.db.sql("""
+            SELECT 
+                gnr_category,
+                movement_type,
+                COUNT(*) as count,
+                SUM(quantity) as total_quantity,
+                SUM(amount) as total_amount
+            FROM `tabGNR Movement Log`
+            WHERE reference_doctype = 'Stock Entry'
+            AND timestamp BETWEEN %s AND %s
+            GROUP BY gnr_category, movement_type
+            ORDER BY gnr_category, movement_type
+        """, (from_date_obj, to_date_obj), as_dict=True)
+        
+        # Organiser les données par catégorie
+        summary = {}
+        for movement in movements:
+            category = movement.gnr_category or "Non classé"
+            if category not in summary:
+                summary[category] = {
+                    'total_movements': 0,
+                    'total_quantity': 0,
+                    'total_amount': 0,
+                    'by_type': {}
+                }
+            
+            summary[category]['total_movements'] += movement.count
+            summary[category]['total_quantity'] += movement.total_quantity or 0
+            summary[category]['total_amount'] += movement.total_amount or 0
+            summary[category]['by_type'][movement.movement_type] = {
+                'count': movement.count,
+                'quantity': movement.total_quantity or 0,
+                'amount': movement.total_amount or 0
+            }
+        
+        return {
+            'success': True,
+            'from_date': from_date,
+            'to_date': to_date,
+            'categories': summary,
+            'total_categories': len(summary)
+        }
+        
+    except Exception as e:
+        logger.error(f"Erreur récupération résumé stock GNR: {e}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def reprocess_stock_entry(stock_entry_name: str) -> Dict[str, Any]:
+    """
+    Retraite un mouvement de stock pour les articles GNR
+    
+    Args:
+        stock_entry_name: Nom du mouvement de stock
+        
+    Returns:
+        Résultat du retraitement
+    """
+    try:
+        stock_doc = frappe.get_doc("Stock Entry", stock_entry_name)
+        
+        if stock_doc.docstatus != 1:
+            return {'success': False, 'message': 'Le mouvement de stock doit être validé'}
+        
+        # Supprimer les anciens logs
+        cancel_mouvement_stock(stock_doc, "reprocess")
+        
+        # Recreer les mouvements
+        capture_mouvement_stock(stock_doc, "reprocess")
+        
+        return {
+            'success': True,
+            'message': f'Mouvement de stock {stock_entry_name} retraité avec succès'
+        }
+        
+    except Exception as e:
+        logger.error(f"Erreur retraitement {stock_entry_name}: {e}")
+        return {'success': False, 'error': str(e)}
