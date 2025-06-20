@@ -272,49 +272,6 @@ gnr_compliance.utils = {
 	},
 };
 
-// Ajouter des boutons dans la barre de navigation pour les utilisateurs GNR Manager
-frappe.ready(function () {
-	if (frappe.user.has_role("GNR Manager") || frappe.user.has_role("System Manager")) {
-		// Ajouter un menu GNR dans la barre principale
-		$(document).on("page-change", function () {
-			if ($(".navbar .gnr-menu").length === 0) {
-				let gnr_menu = `
-                    <li class="dropdown gnr-menu">
-                        <a href="#" class="dropdown-toggle" data-toggle="dropdown">
-                            <i class="fa fa-cog"></i> GNR <b class="caret"></b>
-                        </a>
-                        <ul class="dropdown-menu">
-                            <li>
-                                <a href="#" onclick="gnr_compliance.utils.submit_pending_movements()">
-                                    <i class="fa fa-check"></i> Soumettre brouillons
-                                </a>
-                            </li>
-                            <li>
-                                <a href="#" onclick="gnr_compliance.utils.show_movements_summary()">
-                                    <i class="fa fa-bar-chart"></i> Résumé mouvements
-                                </a>
-                            </li>
-                            <li class="divider"></li>
-                            <li>
-                                <a href="#" onclick="gnr_compliance.utils.fix_missing_periods()">
-                                    <i class="fa fa-calendar"></i> Corriger périodes
-                                </a>
-                            </li>
-                            <li>
-                                <a href="#" onclick="gnr_compliance.utils.cleanup_invalid()">
-                                    <i class="fa fa-trash"></i> Nettoyer invalides
-                                </a>
-                            </li>
-                        </ul>
-                    </li>
-                `;
-
-				$(".navbar-nav").append(gnr_menu);
-			}
-		});
-	}
-});
-
 // Amélioration du formulaire Mouvement GNR
 frappe.ui.form.on("Mouvement GNR", {
 	refresh: function (frm) {
@@ -349,14 +306,16 @@ frappe.ui.form.on("Mouvement GNR", {
 		// Auto-remplir les données GNR de l'article
 		if (frm.doc.code_produit) {
 			frappe.call({
-				method: "gnr_compliance.utils.gnr_utilities.get_item_gnr_info",
+				method: "frappe.client.get_value",
 				args: {
-					item_code: frm.doc.code_produit,
+					doctype: "Item",
+					fieldname: ["gnr_tracked_category", "gnr_tax_rate"],
+					filters: { name: frm.doc.code_produit },
 				},
 				callback: function (r) {
-					if (r.message && r.message.is_tracked) {
-						frm.set_value("categorie_gnr", r.message.category);
-						frm.set_value("taux_gnr", r.message.tax_rate);
+					if (r.message) {
+						frm.set_value("categorie_gnr", r.message.gnr_tracked_category);
+						frm.set_value("taux_gnr", r.message.gnr_tax_rate);
 
 						// Recalculer la taxe
 						if (frm.doc.quantite) {

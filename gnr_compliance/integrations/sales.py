@@ -97,10 +97,15 @@ def capture_vente_gnr(doc, method):
                     })
                     
                     mouvement.insert(ignore_permissions=True)
-                    movements_created += 1
                     
-                    # Log pour debug
-                    frappe.logger().info(f"Mouvement GNR créé: {mouvement.name} pour facture {doc.name}")
+                    # Soumettre automatiquement le mouvement
+                    try:
+                        mouvement.submit()
+                        movements_created += 1
+                        frappe.logger().info(f"Mouvement GNR créé et soumis: {mouvement.name} pour facture {doc.name}")
+                    except Exception as submit_error:
+                        frappe.log_error(f"Erreur soumission mouvement {mouvement.name}: {str(submit_error)}")
+                        movements_created += 1  # Compter quand même comme créé
         
         if movements_created > 0:
             frappe.msgprint(
@@ -180,9 +185,15 @@ def capture_achat_gnr(doc, method):
                     })
                     
                     mouvement.insert(ignore_permissions=True)
-                    movements_created += 1
                     
-                    frappe.logger().info(f"Mouvement GNR achat créé: {mouvement.name} pour facture {doc.name}")
+                    # Soumettre automatiquement le mouvement
+                    try:
+                        mouvement.submit()
+                        movements_created += 1
+                        frappe.logger().info(f"Mouvement GNR achat créé et soumis: {mouvement.name} pour facture {doc.name}")
+                    except Exception as submit_error:
+                        frappe.log_error(f"Erreur soumission mouvement achat {mouvement.name}: {str(submit_error)}")
+                        movements_created += 1  # Compter quand même comme créé
         
         if movements_created > 0:
             frappe.msgprint(

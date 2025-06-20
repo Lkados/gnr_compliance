@@ -51,7 +51,6 @@ for CONTENEUR in "${CONTENEURS[@]}"; do
     echo -e "${BLEU}⟹ Nettoyage sur ${JAUNE}$CONTENEUR${RESET}"
     docker exec $CONTENEUR bash -c '
         rm -rf /home/frappe/frappe-bench/apps/gnr_compliance 2>/dev/null
-        rm -rf /home/frappe/frappe-bench/apps/Josseaume-Energie-Calendar 2>/dev/null
         echo "Dossiers nettoyés"
     '
 done
@@ -71,8 +70,8 @@ done
 # Installation de l'app sur le site et migration
 etape "Finalisation de l'installation..."
 echo -e "${BLEU}⟹ Exécution : ${JAUNE}docker exec erpnext-backend-1 bench --site erp.josseaume-energies.com install-app${RESET}"
-docker exec erpnext-backend-1 bench --site erp.josseaume-energies.com install-app josseaume_energies
-succes "App josseaume_energies installée sur le site"
+docker exec erpnext-backend-1 bench --site erp.josseaume-energies.com install-app gnr_compliance
+succes "App gnr_compliance installée sur le site"
 
 echo -e "${BLEU}⟹ Exécution : ${JAUNE}docker exec erpnext-backend-1 bench --site erp.josseaume-energies.com migrate${RESET}"
 docker exec erpnext-backend-1 bench --site erp.josseaume-energies.com migrate
