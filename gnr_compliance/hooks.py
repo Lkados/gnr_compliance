@@ -1,5 +1,5 @@
 # ==========================================
-# FICHIER: hooks.py - SOLUTION ALTERNATIVE POUR ANNULATION
+# FICHIER: hooks.py - CONFIGURATION COMPLÈTE
 # ==========================================
 
 from __future__ import annotations
@@ -8,24 +8,22 @@ from typing import Dict, List, Any
 app_name = "gnr_compliance"
 app_title = "Conformité GNR"
 app_publisher = "Mohamed Kachtit"
-app_description = "Application de conformité réglementaire GNR avec détection automatique"
+app_description = "Application de conformité réglementaire GNR avec détection automatique et gestion d'annulation"
 app_icon = "octicon octicon-law"
 app_color = "#2e8b57"
-app_version = "1.0.2"
+app_version = "1.1.0"
 
 # Configuration après installation
 after_install = "gnr_compliance.setup.install.after_install"
 
-# === Intégration avec les modules ERPNext - SOLUTION ALTERNATIVE ===
+# === Intégration avec les modules ERPNext ===
 doc_events = {
     "Sales Invoice": {
         "on_submit": "gnr_compliance.integrations.sales.capture_vente_gnr",
-        "before_validate": "gnr_compliance.integrations.sales.handle_sales_invoice_cancel",  # Intercept plus tôt
         "on_cancel": "gnr_compliance.integrations.sales.cleanup_after_cancel"
     },
     "Purchase Invoice": {
         "on_submit": "gnr_compliance.integrations.sales.capture_achat_gnr",
-        "before_validate": "gnr_compliance.integrations.sales.handle_purchase_invoice_cancel",  # Intercept plus tôt
         "on_cancel": "gnr_compliance.integrations.sales.cleanup_after_cancel_purchase"
     },
     "Stock Entry": {
@@ -38,18 +36,13 @@ doc_events = {
     }
 }
 
-# === Scripts personnalisés ===
+# === Scripts personnalisés par DocType ===
 doctype_js = {
     "Sales Invoice": "public/js/sales_invoice_gnr.js",
     "Purchase Invoice": "public/js/purchase_invoice_gnr.js", 
     "Stock Entry": "public/js/stock_entry_gnr.js",
     "Mouvement GNR": "public/js/gnr_management.js"
 }
-
-# === Scripts globaux (chargés partout) ===
-app_include_js = [
-    "/assets/gnr_compliance/js/cancel_dialog_enhancement.js"
-]
 
 # === Champs personnalisés unifiés ===
 custom_fields = {
@@ -162,5 +155,52 @@ scheduler_events = {
     "daily": [
         "gnr_compliance.tasks.daily_gnr_sync",
         "gnr_compliance.tasks.check_gnr_compliance"
+    ],
+    "weekly": [
+        "gnr_compliance.tasks.weekly_gnr_report"
+    ],
+    "monthly": [
+        "gnr_compliance.tasks.monthly_gnr_summary"
     ]
+}
+
+# === Permissions personnalisées ===
+# Permettre l'annulation des mouvements GNR via API
+website_route_rules = [
+    {"from_route": "/gnr-compliance/<path:app_path>", "to_route": "gnr-compliance"},
+]
+
+# === Configuration de l'application ===
+boot_session = "gnr_compliance.utils.boot.boot_session"
+
+# === Fonctions d'installation ===
+after_migrate = [
+    "gnr_compliance.setup.install.after_migrate"
+]
+
+# === Configuration des logs ===
+log_settings = {
+    "gnr_compliance": {
+        "level": "INFO",
+        "file": "gnr_compliance.log"
+    }
+}
+
+# === Validation des données ===
+doc_events.update({
+    "Mouvement GNR": {
+        "before_save": "gnr_compliance.utils.gnr_utilities.validate_gnr_movement",
+        "before_submit": "gnr_compliance.utils.gnr_utilities.check_duplicate_movement",
+        "on_cancel": "gnr_compliance.utils.gnr_utilities.update_reference_status"
+    }
+})
+
+# === Configuration des rapports ===
+standard_queries = {
+    "Mouvement GNR": "gnr_compliance.queries.gnr_queries.mouvement_gnr_query"
+}
+
+# === Fonctions d'export ===
+export_python_type_map = {
+    "Mouvement GNR": "gnr_compliance.utils.export.export_gnr_movement"
 }

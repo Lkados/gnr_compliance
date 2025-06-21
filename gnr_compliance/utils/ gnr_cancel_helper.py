@@ -120,3 +120,63 @@ def quick_cancel_sales_invoice(name):
 def quick_cancel_purchase_invoice(name):
     """Fonction rapide pour annuler une facture d'achat"""
     return cancel_invoice_with_gnr("Purchase Invoice", name)
+
+
+# === FONCTIONS DE DEBUG ===
+
+@frappe.whitelist()
+def debug_document_links(doctype, name):
+    """
+    Debug les liens d'un document pour voir ce qui bloque l'annulation
+    """
+    try:
+        # Vérifier les mouvements GNR
+        gnr_movements = frappe.get_all("Mouvement GNR",
+                                      filters={
+                                          "reference_document": doctype,
+                                          "reference_name": name
+                                      },
+                                      fields=["name", "docstatus", "creation"])
+        
+        # Vérifier d'autres liens possibles
+        linked_docs = frappe.get_all("DocType Link",
+                                    filters={
+                                        "parent": doctype
+                                    },
+                                    fields=["link_doctype", "link_fieldname"])
+        
+        result = {
+            "gnr_movements": gnr_movements,
+            "potential_links": linked_docs,
+            "document_status": frappe.get_value(doctype, name, "docstatus")
+        }
+        
+        return result
+        
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@frappe.whitelist()
+def force_cancel_document(doctype, name):
+    """
+    Force l'annulation d'un document en ignorant les liens
+    ATTENTION: À utiliser avec précaution
+    """
+    try:
+        doc = frappe.get_doc(doctype, name)
+        
+        # Forcer l'annulation
+        doc.flags.ignore_links = True
+        doc.cancel()
+        
+        return {
+            "success": True,
+            "message": f"Document {name} annulé en mode forcé"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e)
+        }
