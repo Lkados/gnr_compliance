@@ -1,5 +1,5 @@
 # ==========================================
-# FICHIER: hooks.py - VERSION CORRIGÉE
+# FICHIER: gnr_compliance/gnr_compliance/hooks.py - VERSION CORRIGÉE
 # ==========================================
 
 from __future__ import annotations
@@ -19,21 +19,22 @@ after_install = "gnr_compliance.setup.install.after_install"
 # === Intégration avec les modules ERPNext ===
 doc_events = {
     "Sales Invoice": {
-        "on_submit": "gnr_compliance.integrations.sales.capture_vente_gnr",
-        "on_cancel": "gnr_compliance.integrations.sales.cleanup_after_cancel"
+        "on_submit": "gnr_compliance.gnr_compliance.integrations.sales.capture_vente_gnr",
+        "on_cancel": "gnr_compliance.gnr_compliance.integrations.sales.cleanup_after_cancel"
     },
     "Purchase Invoice": {
-        "on_submit": "gnr_compliance.integrations.sales.capture_achat_gnr",
-        "on_cancel": "gnr_compliance.integrations.sales.cleanup_after_cancel_purchase"
+        "on_submit": "gnr_compliance.gnr_compliance.integrations.sales.capture_achat_gnr",
+        "on_cancel": "gnr_compliance.gnr_compliance.integrations.sales.cleanup_after_cancel_purchase"
     },
     "Stock Entry": {
-        "on_submit": "gnr_compliance.integrations.stock.capture_mouvement_stock",
-        "before_cancel": "gnr_compliance.integrations.stock.cancel_mouvement_stock"
-    },
-    "Item": {
-        "validate": "gnr_compliance.utils.category_detector.detect_gnr_category",
-        "on_update": "gnr_compliance.utils.category_detector.update_gnr_tracking"
+        "on_submit": "gnr_compliance.gnr_compliance.integrations.stock.capture_mouvement_stock",
+        "before_cancel": "gnr_compliance.gnr_compliance.integrations.stock.cancel_mouvement_stock"
     }
+    # COMMENTÉ car module manquant :
+    # "Item": {
+    #     "validate": "gnr_compliance.gnr_compliance.utils.category_detector.detect_gnr_category",
+    #     "on_update": "gnr_compliance.gnr_compliance.utils.category_detector.update_gnr_tracking"
+    # }
 }
 
 # === Scripts personnalisés par DocType ===
@@ -41,7 +42,8 @@ doctype_js = {
     "Sales Invoice": "public/js/sales_invoice_gnr.js",
     "Purchase Invoice": "public/js/purchase_invoice_gnr.js", 
     "Stock Entry": "public/js/stock_entry_gnr.js",
-    "Mouvement GNR": "public/js/gnr_management.js"
+    # COMMENTÉ car fichier manquant :
+    # "Mouvement GNR": "public/js/gnr_management.js"
 }
 
 # === Champs personnalisés unifiés ===
@@ -148,18 +150,13 @@ fixtures = [
 ]
 
 # === Scheduled Tasks ===
-scheduler_events = {
-    "hourly": [
-        "gnr_compliance.utils.gnr_utilities.auto_submit_pending_movements"
-    ],
-    "daily": [
-        "gnr_compliance.tasks.daily_gnr_sync",
-        "gnr_compliance.tasks.check_gnr_compliance"
-    ],
-    "weekly": [
-        "gnr_compliance.tasks.weekly_gnr_report"
-    ],
-    "monthly": [
-        "gnr_compliance.tasks.monthly_gnr_summary"
-    ]
-}
+# COMMENTÉ car modules manquants :
+# scheduler_events = {
+#     "hourly": [
+#         "gnr_compliance.gnr_compliance.utils.gnr_utilities.auto_submit_pending_movements"
+#     ],
+#     "daily": [
+#         "gnr_compliance.gnr_compliance.tasks.daily_gnr_sync",
+#         "gnr_compliance.gnr_compliance.tasks.check_gnr_compliance"
+#     ]
+# }
