@@ -1,0 +1,33 @@
+{
+  "actions": [],
+  "creation": "2025-06-21 10:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": ["type_mouvement", "inclus", "description"],
+  "fields": [
+    {
+      "fieldname": "type_mouvement",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "label": "Type de Mouvement",
+      "options": "Vente\nAchat\nStock\nTransfert\nEntrée\nSortie",
+      "reqd": 1
+    },
+    {
+      "default": "1",
+      "fieldname": "inclus",
+      "fieldtype": "Check",
+      "in_list_view": 1,
+      "label": "Inclure"
+    },
+    {
+      "fieldname": "description",
+      "fieldtype": "Data",
+      "label": "Description",
+      "description": "Description optionnelle du type de mouvement"
+    }
+  ],
+  "is_child_table": 1,
+  "module": "GNR Compliance",
+  "name": "Type Mouvement Filter"
+}

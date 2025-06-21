@@ -1,0 +1,42 @@
+{
+  "actions": [],
+  "creation": "2025-06-21 10:00:00.000000",
+  "doctype": "DocType",
+  "engine": "InnoDB",
+  "field_order": ["code_produit", "nom_produit", "categorie_gnr", "inclus"],
+  "fields": [
+    {
+      "fieldname": "code_produit",
+      "fieldtype": "Link",
+      "in_list_view": 1,
+      "label": "Code Produit",
+      "options": "Item",
+      "reqd": 1
+    },
+    {
+      "fieldname": "nom_produit",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Nom Produit",
+      "read_only": 1,
+      "fetch_from": "code_produit.item_name"
+    },
+    {
+      "fieldname": "categorie_gnr",
+      "fieldtype": "Data",
+      "label": "Catégorie GNR",
+      "read_only": 1,
+      "fetch_from": "code_produit.gnr_tracked_category"
+    },
+    {
+      "default": "1",
+      "fieldname": "inclus",
+      "fieldtype": "Check",
+      "in_list_view": 1,
+      "label": "Inclure"
+    }
+  ],
+  "is_child_table": 1,
+  "module": "GNR Compliance",
+  "name": "Produit GNR Filter"
+}

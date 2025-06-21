@@ -1,0 +1,253 @@
+{
+  "actions": [],
+  "allow_rename": 1,
+  "autoname": "format:DECL-{type_periode}-{periode}-{annee}",
+  "creation": "2025-06-21 10:00:00.000000",
+  "doctype": "DocType",
+  "editable_grid": 1,
+  "engine": "InnoDB",
+  "field_order": [
+    "section_periode",
+    "type_periode",
+    "periode",
+    "annee",
+    "column_break_periode",
+    "date_debut",
+    "date_fin",
+    "statut",
+    "section_filtres",
+    "types_mouvement",
+    "produits_inclus",
+    "column_break_filtres",
+    "inclure_details_clients",
+    "inclure_stocks",
+    "section_donnees",
+    "stock_debut_periode",
+    "total_entrees",
+    "total_sorties",
+    "total_ventes",
+    "column_break_donnees",
+    "stock_fin_periode",
+    "total_taxe_gnr",
+    "nb_clients",
+    "section_observations",
+    "observations",
+    "donnees_detaillees",
+    "amended_from"
+  ],
+  "fields": [
+    {
+      "fieldname": "section_periode",
+      "fieldtype": "Section Break",
+      "label": "Période de Déclaration"
+    },
+    {
+      "fieldname": "type_periode",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "label": "Type de Période",
+      "options": "Mensuel\nTrimestriel\nSemestriel\nAnnuel",
+      "reqd": 1,
+      "default": "Trimestriel"
+    },
+    {
+      "fieldname": "periode",
+      "fieldtype": "Data",
+      "in_list_view": 1,
+      "label": "Période",
+      "reqd": 1,
+      "description": "Ex: T1, T2, T3, T4 pour trimestriel ou 01, 02, 03... pour mensuel"
+    },
+    {
+      "fieldname": "annee",
+      "fieldtype": "Int",
+      "in_list_view": 1,
+      "label": "Année",
+      "reqd": 1,
+      "default": "eval:new Date().getFullYear()"
+    },
+    {
+      "fieldname": "column_break_periode",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "date_debut",
+      "fieldtype": "Date",
+      "label": "Date Début",
+      "reqd": 1
+    },
+    {
+      "fieldname": "date_fin",
+      "fieldtype": "Date",
+      "label": "Date Fin",
+      "reqd": 1
+    },
+    {
+      "default": "Brouillon",
+      "fieldname": "statut",
+      "fieldtype": "Select",
+      "in_list_view": 1,
+      "label": "Statut",
+      "options": "Brouillon\nEn cours\nSoumise\nValidée\nTransmise"
+    },
+    {
+      "fieldname": "section_filtres",
+      "fieldtype": "Section Break",
+      "label": "Filtres et Options"
+    },
+    {
+      "fieldname": "types_mouvement",
+      "fieldtype": "Table MultiSelect",
+      "label": "Types de Mouvement",
+      "options": "Type Mouvement Filter",
+      "description": "Sélectionner les types de mouvements à inclure"
+    },
+    {
+      "fieldname": "produits_inclus",
+      "fieldtype": "Table MultiSelect",
+      "label": "Produits Inclus",
+      "options": "Produit GNR Filter",
+      "description": "Laisser vide pour inclure tous les produits GNR"
+    },
+    {
+      "fieldname": "column_break_filtres",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "inclure_details_clients",
+      "fieldtype": "Check",
+      "label": "Inclure Détails Clients",
+      "default": "1",
+      "description": "Obligatoire pour rapports semestriels"
+    },
+    {
+      "fieldname": "inclure_stocks",
+      "fieldtype": "Check",
+      "label": "Inclure Mouvements de Stock",
+      "default": "1"
+    },
+    {
+      "fieldname": "section_donnees",
+      "fieldtype": "Section Break",
+      "label": "Données Calculées"
+    },
+    {
+      "fieldname": "stock_debut_periode",
+      "fieldtype": "Float",
+      "label": "Stock Début (L)",
+      "precision": "3",
+      "read_only": 1
+    },
+    {
+      "fieldname": "total_entrees",
+      "fieldtype": "Float",
+      "label": "Total Entrées (L)",
+      "precision": "3",
+      "read_only": 1
+    },
+    {
+      "fieldname": "total_sorties",
+      "fieldtype": "Float",
+      "label": "Total Sorties (L)",
+      "precision": "3",
+      "read_only": 1
+    },
+    {
+      "fieldname": "total_ventes",
+      "fieldtype": "Float",
+      "label": "Total Ventes (L)",
+      "precision": "3",
+      "read_only": 1
+    },
+    {
+      "fieldname": "column_break_donnees",
+      "fieldtype": "Column Break"
+    },
+    {
+      "fieldname": "stock_fin_periode",
+      "fieldtype": "Float",
+      "label": "Stock Fin (L)",
+      "precision": "3",
+      "read_only": 1
+    },
+    {
+      "fieldname": "total_taxe_gnr",
+      "fieldtype": "Currency",
+      "label": "Total Taxe GNR (€)",
+      "read_only": 1
+    },
+    {
+      "fieldname": "nb_clients",
+      "fieldtype": "Int",
+      "label": "Nombre de Clients",
+      "read_only": 1
+    },
+    {
+      "fieldname": "section_observations",
+      "fieldtype": "Section Break",
+      "label": "Observations et Données Détaillées"
+    },
+    {
+      "fieldname": "observations",
+      "fieldtype": "Text",
+      "label": "Observations"
+    },
+    {
+      "fieldname": "donnees_detaillees",
+      "fieldtype": "Long Text",
+      "label": "Données Détaillées (JSON)",
+      "read_only": 1,
+      "description": "Stockage des données détaillées au format JSON"
+    },
+    {
+      "fieldname": "amended_from",
+      "fieldtype": "Link",
+      "label": "Amended From",
+      "no_copy": 1,
+      "options": "Declaration Periode GNR",
+      "print_hide": 1,
+      "read_only": 1,
+      "search_index": 1
+    }
+  ],
+  "index_web_pages_for_search": 1,
+  "is_submittable": 1,
+  "links": [],
+  "modified": "2025-06-21 10:00:00.000000",
+  "modified_by": "Administrator",
+  "module": "GNR Compliance",
+  "name": "Declaration Periode GNR",
+  "naming_rule": "Expression",
+  "permissions": [
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "System Manager",
+      "share": 1,
+      "submit": 1,
+      "write": 1
+    },
+    {
+      "create": 1,
+      "delete": 1,
+      "email": 1,
+      "export": 1,
+      "print": 1,
+      "read": 1,
+      "report": 1,
+      "role": "GNR Manager",
+      "share": 1,
+      "submit": 1,
+      "write": 1
+    }
+  ],
+  "sort_field": "modified",
+  "sort_order": "DESC",
+  "states": [],
+  "track_changes": 1
+}
