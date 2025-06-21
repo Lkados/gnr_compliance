@@ -20,15 +20,15 @@ after_install = "gnr_compliance.setup.install.after_install"
 doc_events = {
     "Sales Invoice": {
         "on_submit": "gnr_compliance.integrations.sales.capture_vente_gnr",
-        "on_cancel": "gnr_compliance.integrations.sales.cancel_vente_gnr"
+        "before_cancel": "gnr_compliance.integrations.sales.cancel_vente_gnr"  # ⬅️ CHANGÉ
     },
     "Purchase Invoice": {
         "on_submit": "gnr_compliance.integrations.sales.capture_achat_gnr",
-        "on_cancel": "gnr_compliance.integrations.sales.cancel_achat_gnr"
+        "before_cancel": "gnr_compliance.integrations.sales.cancel_achat_gnr"  # ⬅️ CHANGÉ
     },
     "Stock Entry": {
         "on_submit": "gnr_compliance.integrations.stock.capture_mouvement_stock",
-        "on_cancel": "gnr_compliance.integrations.stock.cancel_mouvement_stock"
+        "before_cancel": "gnr_compliance.integrations.stock.cancel_mouvement_stock"  # ⬅️ CHANGÉ
     },
     "Item": {
         "validate": "gnr_compliance.utils.category_detector.detect_gnr_category",

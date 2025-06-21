@@ -279,3 +279,36 @@ def cancel_achat_gnr(doc, method):
             
     except Exception as e:
         frappe.log_error(f"Erreur annulation GNR achat pour facture {doc.name}: {str(e)}")
+
+def cleanup_after_cancel(doc, method):
+    """Nettoyage final après annulation facture de vente"""
+    try:
+        # Vérifier s'il reste des mouvements non traités
+        remaining = frappe.get_all("Mouvement GNR",
+                                 filters={
+                                     "reference_document": "Sales Invoice",
+                                     "reference_name": doc.name,
+                                     "docstatus": ["!=", 2]
+                                 })
+        
+        if remaining:
+            frappe.log_error(f"Mouvements GNR restants après annulation facture {doc.name}: {len(remaining)}")
+            
+    except Exception as e:
+        frappe.log_error(f"Erreur nettoyage final facture {doc.name}: {str(e)}")
+
+def cleanup_after_cancel_purchase(doc, method):
+    """Nettoyage final après annulation facture d'achat"""
+    try:
+        remaining = frappe.get_all("Mouvement GNR",
+                                 filters={
+                                     "reference_document": "Purchase Invoice", 
+                                     "reference_name": doc.name,
+                                     "docstatus": ["!=", 2]
+                                 })
+        
+        if remaining:
+            frappe.log_error(f"Mouvements GNR achat restants après annulation facture {doc.name}: {len(remaining)}")
+            
+    except Exception as e:
+        frappe.log_error(f"Erreur nettoyage final facture achat {doc.name}: {str(e)}")
