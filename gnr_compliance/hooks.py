@@ -1,5 +1,5 @@
 # ==========================================
-# FICHIER: hooks.py - VERSION CORRIGÉE (sans erreur dashboard)
+# FICHIER: hooks.py - SOLUTION ALTERNATIVE POUR ANNULATION
 # ==========================================
 
 from __future__ import annotations
@@ -11,22 +11,22 @@ app_publisher = "Mohamed Kachtit"
 app_description = "Application de conformité réglementaire GNR avec détection automatique"
 app_icon = "octicon octicon-law"
 app_color = "#2e8b57"
-app_version = "1.0.1"
+app_version = "1.0.2"
 
 # Configuration après installation
 after_install = "gnr_compliance.setup.install.after_install"
 
-# === Intégration avec les modules ERPNext - CORRECTION ANNULATION ===
+# === Intégration avec les modules ERPNext - SOLUTION ALTERNATIVE ===
 doc_events = {
     "Sales Invoice": {
         "on_submit": "gnr_compliance.integrations.sales.capture_vente_gnr",
-        "before_cancel": "gnr_compliance.integrations.sales.cancel_vente_gnr",  # AVANT annulation
-        "on_cancel": "gnr_compliance.integrations.sales.cleanup_after_cancel"   # APRÈS annulation
+        "before_validate": "gnr_compliance.integrations.sales.handle_sales_invoice_cancel",  # Intercept plus tôt
+        "on_cancel": "gnr_compliance.integrations.sales.cleanup_after_cancel"
     },
     "Purchase Invoice": {
         "on_submit": "gnr_compliance.integrations.sales.capture_achat_gnr",
-        "before_cancel": "gnr_compliance.integrations.sales.cancel_achat_gnr",  # AVANT annulation
-        "on_cancel": "gnr_compliance.integrations.sales.cleanup_after_cancel_purchase"  # APRÈS annulation
+        "before_validate": "gnr_compliance.integrations.sales.handle_purchase_invoice_cancel",  # Intercept plus tôt
+        "on_cancel": "gnr_compliance.integrations.sales.cleanup_after_cancel_purchase"
     },
     "Stock Entry": {
         "on_submit": "gnr_compliance.integrations.stock.capture_mouvement_stock",
@@ -45,6 +45,11 @@ doctype_js = {
     "Stock Entry": "public/js/stock_entry_gnr.js",
     "Mouvement GNR": "public/js/gnr_management.js"
 }
+
+# === Scripts globaux (chargés partout) ===
+app_include_js = [
+    "/assets/gnr_compliance/js/cancel_dialog_enhancement.js"
+]
 
 # === Champs personnalisés unifiés ===
 custom_fields = {
@@ -149,12 +154,6 @@ fixtures = [
     }
 ]
 
-# === OVERRIDES pour annulation en cascade ===
-override_doctype_class = {
-    "Sales Invoice": "gnr_compliance.overrides.sales_invoice.SalesInvoiceGNR",
-    "Purchase Invoice": "gnr_compliance.overrides.purchase_invoice.PurchaseInvoiceGNR"
-}
-
 # === Scheduled Tasks ===
 scheduler_events = {
     "hourly": [
@@ -162,15 +161,6 @@ scheduler_events = {
     ],
     "daily": [
         "gnr_compliance.tasks.daily_gnr_sync",
-        "gnr_compliance.tasks.check_gnr_compliance",
-        "gnr_compliance.utils.cache_manager.refresh_category_cache"
-    ],
-    "weekly": [
-        "gnr_compliance.tasks.weekly_gnr_report",
-        "gnr_compliance.utils.category_detector.process_pending_categorization"
-    ],
-    "monthly": [
-        "gnr_compliance.tasks.monthly_gnr_summary",
-        "gnr_compliance.tasks.generate_quarterly_reports"
+        "gnr_compliance.tasks.check_gnr_compliance"
     ]
 }
