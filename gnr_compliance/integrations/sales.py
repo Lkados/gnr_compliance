@@ -312,3 +312,136 @@ def cleanup_after_cancel_purchase(doc, method):
             
     except Exception as e:
         frappe.log_error(f"Erreur nettoyage final facture achat {doc.name}: {str(e)}")
+
+def cleanup_after_cancel(doc, method):
+    """Nettoyage final après annulation facture de vente"""
+    try:
+        # Vérifier s'il reste des mouvements non traités
+        remaining = frappe.get_all("Mouvement GNR",
+                                 filters={
+                                     "reference_document": "Sales Invoice",
+                                     "reference_name": doc.name,
+                                     "docstatus": ["!=", 2]
+                                 })
+        
+        if remaining:
+            frappe.logger().info(f"Nettoyage final: {len(remaining)} mouvements GNR restants pour facture {doc.name}")
+            
+        # Mettre à jour les statuts si nécessaire
+        update_gnr_tracking_status(doc, "cancelled")
+            
+    except Exception as e:
+        frappe.log_error(f"Erreur nettoyage final facture {doc.name}: {str(e)}")
+
+def cleanup_after_cancel_purchase(doc, method):
+    """Nettoyage final après annulation facture d'achat"""
+    try:
+        remaining = frappe.get_all("Mouvement GNR",
+                                 filters={
+                                     "reference_document": "Purchase Invoice", 
+                                     "reference_name": doc.name,
+                                     "docstatus": ["!=", 2]
+                                 })
+        
+        if remaining:
+            frappe.logger().info(f"Nettoyage final: {len(remaining)} mouvements GNR achat restants pour facture {doc.name}")
+            
+        # Mettre à jour les statuts si nécessaire
+        update_gnr_tracking_status(doc, "cancelled")
+            
+    except Exception as e:
+        frappe.log_error(f"Erreur nettoyage final facture achat {doc.name}: {str(e)}")
+
+def update_gnr_tracking_status(doc, status):
+    """Met à jour le statut de suivi GNR pour un document"""
+    try:
+        # Ajouter un commentaire sur le document pour traçabilité
+        doc.add_comment(
+            comment_type="Info",
+            text=f"Statut GNR mis à jour: {status}"
+        )
+        
+        # Log pour audit
+        frappe.logger().info(f"Document {doc.name} - Statut GNR: {status}")
+        
+    except Exception as e:
+        frappe.log_error(f"Erreur mise à jour statut GNR pour {doc.name}: {str(e)}")
+
+@frappe.whitelist()
+def get_invoice_gnr_summary(doctype, name):
+    """
+    Récupère un résumé des mouvements GNR pour une facture
+    """
+    try:
+        movements = frappe.get_all("Mouvement GNR",
+                                 filters={
+                                     "reference_document": doctype,
+                                     "reference_name": name
+                                 },
+                                 fields=[
+                                     "name", "docstatus", "type_mouvement", 
+                                     "quantite", "creation", "modified"
+                                 ],
+                                 order_by="creation desc")
+        
+        summary = {
+            "total_movements": len(movements),
+            "active_movements": len([m for m in movements if m.docstatus == 1]),
+            "cancelled_movements": len([m for m in movements if m.docstatus == 2]),
+            "draft_movements": len([m for m in movements if m.docstatus == 0]),
+            "movements": movements
+        }
+        
+        return summary
+        
+    except Exception as e:
+        frappe.log_error(f"Erreur récupération résumé GNR pour {doctype} {name}: {str(e)}")
+        return {"error": str(e)}
+
+@frappe.whitelist()
+def validate_cancellation_allowed(doctype, name):
+    """
+    Vérifie si l'annulation d'un document est autorisée
+    """
+    try:
+        # Vérifier les permissions
+        if not frappe.has_permission(doctype, "cancel"):
+            return {
+                "allowed": False,
+                "reason": "Permissions insuffisantes"
+            }
+        
+        # Vérifier le statut du document
+        doc = frappe.get_doc(doctype, name)
+        if doc.docstatus != 1:
+            return {
+                "allowed": False,
+                "reason": "Le document doit être soumis"
+            }
+        
+        # Vérifier les mouvements GNR
+        gnr_movements = frappe.get_all("Mouvement GNR",
+                                     filters={
+                                         "reference_document": doctype,
+                                         "reference_name": name,
+                                         "docstatus": 1
+                                     })
+        
+        if gnr_movements:
+            return {
+                "allowed": False,
+                "reason": f"{len(gnr_movements)} mouvement(s) GNR actif(s)",
+                "gnr_movements": gnr_movements,
+                "suggest_gnr_cancel": True
+            }
+        
+        return {
+            "allowed": True,
+            "reason": "Annulation autorisée"
+        }
+        
+    except Exception as e:
+        return {
+            "allowed": False,
+            "reason": f"Erreur de validation: {str(e)}"
+        }
