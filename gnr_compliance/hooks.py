@@ -1,6 +1,9 @@
 # ==========================================
-# FICHIER: hooks.py - CORRECTION POUR ANNULATION
+# FICHIER: hooks.py - VERSION CORRIGÉE (sans erreur dashboard)
 # ==========================================
+
+from __future__ import annotations
+from typing import Dict, List, Any
 
 app_name = "gnr_compliance"
 app_title = "Conformité GNR"
@@ -35,7 +38,7 @@ doc_events = {
     }
 }
 
-# Scripts personnalisés
+# === Scripts personnalisés ===
 doctype_js = {
     "Sales Invoice": "public/js/sales_invoice_gnr.js",
     "Purchase Invoice": "public/js/purchase_invoice_gnr.js", 
@@ -43,7 +46,7 @@ doctype_js = {
     "Mouvement GNR": "public/js/gnr_management.js"
 }
 
-# === Champs personnalisés ===
+# === Champs personnalisés unifiés ===
 custom_fields = {
     "Item": [
         {
@@ -96,22 +99,72 @@ custom_fields = {
             "depends_on": "is_gnr_tracked",
             "insert_after": "gnr_auto_assigned"
         }
+    ],
+    "Stock Entry": [
+        {
+            "fieldname": "gnr_processing_section",
+            "label": "Traitement GNR",
+            "fieldtype": "Section Break",
+            "insert_after": "posting_time",
+            "collapsible": 1,
+            "collapsible_depends_on": "gnr_items_detected"
+        },
+        {
+            "fieldname": "gnr_items_detected",
+            "label": "Articles GNR Détectés",
+            "fieldtype": "Int",
+            "read_only": 1,
+            "default": "0",
+            "insert_after": "gnr_processing_section"
+        },
+        {
+            "fieldname": "gnr_categories_processed",
+            "label": "Catégories GNR Traitées",
+            "fieldtype": "Check",
+            "default": "0",
+            "read_only": 1,
+            "insert_after": "gnr_items_detected"
+        }
     ]
 }
 
-# Scheduled Tasks
+# === Fixtures pour l'installation ===
+fixtures = [
+    {
+        "dt": "Custom Field",
+        "filters": [
+            ["name", "in", [
+                "Item-gnr_section",
+                "Item-is_gnr_tracked",
+                "Item-gnr_tracked_category",
+                "Item-gnr_tax_rate",
+                "Item-gnr_column_break",
+                "Item-gnr_auto_assigned",
+                "Item-gnr_last_updated",
+                "Stock Entry-gnr_processing_section",
+                "Stock Entry-gnr_items_detected",
+                "Stock Entry-gnr_categories_processed"
+            ]]
+        ]
+    }
+]
+
+# === Scheduled Tasks ===
 scheduler_events = {
     "hourly": [
         "gnr_compliance.utils.gnr_utilities.auto_submit_pending_movements"
     ],
     "daily": [
         "gnr_compliance.tasks.daily_gnr_sync",
-        "gnr_compliance.tasks.check_gnr_compliance"
+        "gnr_compliance.tasks.check_gnr_compliance",
+        "gnr_compliance.utils.cache_manager.refresh_category_cache"
+    ],
+    "weekly": [
+        "gnr_compliance.tasks.weekly_gnr_report",
+        "gnr_compliance.utils.category_detector.process_pending_categorization"
+    ],
+    "monthly": [
+        "gnr_compliance.tasks.monthly_gnr_summary",
+        "gnr_compliance.tasks.generate_quarterly_reports"
     ]
-}
-
-# === CONFIGURATION POUR PERMETTRE ANNULATION ===
-override_doctype_dashboards = {
-    "Sales Invoice": "gnr_compliance.dashboard.sales_invoice_dashboard.get_dashboard_data",
-    "Purchase Invoice": "gnr_compliance.dashboard.purchase_invoice_dashboard.get_dashboard_data"
 }
