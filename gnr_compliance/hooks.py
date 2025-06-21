@@ -1,5 +1,5 @@
 # ==========================================
-# FICHIER: hooks.py - CONFIGURATION COMPLÈTE
+# FICHIER: hooks.py - VERSION CORRIGÉE
 # ==========================================
 
 from __future__ import annotations
@@ -162,45 +162,4 @@ scheduler_events = {
     "monthly": [
         "gnr_compliance.tasks.monthly_gnr_summary"
     ]
-}
-
-# === Permissions personnalisées ===
-# Permettre l'annulation des mouvements GNR via API
-website_route_rules = [
-    {"from_route": "/gnr-compliance/<path:app_path>", "to_route": "gnr-compliance"},
-]
-
-# === Configuration de l'application ===
-boot_session = "gnr_compliance.utils.boot.boot_session"
-
-# === Fonctions d'installation ===
-after_migrate = [
-    "gnr_compliance.setup.install.after_migrate"
-]
-
-# === Configuration des logs ===
-log_settings = {
-    "gnr_compliance": {
-        "level": "INFO",
-        "file": "gnr_compliance.log"
-    }
-}
-
-# === Validation des données ===
-doc_events.update({
-    "Mouvement GNR": {
-        "before_save": "gnr_compliance.utils.gnr_utilities.validate_gnr_movement",
-        "before_submit": "gnr_compliance.utils.gnr_utilities.check_duplicate_movement",
-        "on_cancel": "gnr_compliance.utils.gnr_utilities.update_reference_status"
-    }
-})
-
-# === Configuration des rapports ===
-standard_queries = {
-    "Mouvement GNR": "gnr_compliance.queries.gnr_queries.mouvement_gnr_query"
-}
-
-# === Fonctions d'export ===
-export_python_type_map = {
-    "Mouvement GNR": "gnr_compliance.utils.export.export_gnr_movement"
 }
