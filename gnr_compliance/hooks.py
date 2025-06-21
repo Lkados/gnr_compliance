@@ -149,6 +149,12 @@ fixtures = [
     }
 ]
 
+# === OVERRIDES pour annulation en cascade ===
+override_doctype_class = {
+    "Sales Invoice": "gnr_compliance.overrides.sales_invoice.SalesInvoiceGNR",
+    "Purchase Invoice": "gnr_compliance.overrides.purchase_invoice.PurchaseInvoiceGNR"
+}
+
 # === Scheduled Tasks ===
 scheduler_events = {
     "hourly": [
