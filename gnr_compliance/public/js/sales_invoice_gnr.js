@@ -1,116 +1,197 @@
-// Améliorations pour Sales Invoice GNR
+// ==========================================
+// FICHIER: public/js/sales_invoice_gnr.js
+// BOUTON SIMPLE pour annuler factures avec mouvements GNR
+// ==========================================
+
 frappe.ui.form.on("Sales Invoice", {
 	refresh: function (frm) {
-		// Ajouter des indicateurs GNR pour les factures validées
+		// Ajouter bouton d'annulation GNR si le document est soumis
 		if (frm.doc.docstatus === 1) {
-			add_gnr_indicators(frm);
-		}
-
-		// Bouton pour analyser les articles GNR
-		if (frm.doc.items && frm.doc.items.length > 0) {
-			frm.add_custom_button(
-				__("Analyser GNR"),
-				function () {
-					analyze_gnr_items(frm);
+			// Vérifier s'il y a des mouvements GNR liés
+			frappe.call({
+				method: "frappe.client.get_list",
+				args: {
+					doctype: "Mouvement GNR",
+					filters: {
+						reference_document: "Sales Invoice",
+						reference_name: frm.doc.name,
+						docstatus: 1,
+					},
+					fields: ["name", "type_mouvement", "quantite"],
 				},
-				__("Actions")
-			);
-		}
-	},
+				callback: function (r) {
+					if (r.message && r.message.length > 0) {
+						// Il y a des mouvements GNR, ajouter le bouton
+						frm.add_custom_button(
+							__("🔄 Annuler avec GNR"),
+							function () {
+								show_gnr_cancel_dialog(frm, r.message);
+							},
+							__("Actions")
+						).addClass("btn-warning");
 
-	onload: function (frm) {
-		// Filtrer les articles GNR si nécessaire
-		setup_gnr_item_filters(frm);
+						// Ajouter info dans le dashboard
+						frm.dashboard.add_comment(
+							`⚠️ ${r.message.length} mouvement(s) GNR lié(s) à cette facture`,
+							"orange",
+							true
+						);
+					}
+				},
+			});
+		}
 	},
 });
 
-function add_gnr_indicators(frm) {
-	if (!frm.doc.items) return;
+function show_gnr_cancel_dialog(frm, gnr_movements) {
+	const movements_list = gnr_movements
+		.map(
+			(m) =>
+				`• <strong>${m.name}</strong> - ${m.type_mouvement || "N/A"} (${
+					m.quantite || 0
+				} L)`
+		)
+		.join("<br>");
 
-	let gnr_items = frm.doc.items.filter((item) => {
-		// Logique simple pour détecter les articles GNR
-		return (
-			item.item_code &&
-			(item.item_code.toLowerCase().includes("gnr") ||
-				item.item_code.toLowerCase().includes("gazole") ||
-				item.item_code.toLowerCase().includes("fioul") ||
-				(item.item_name &&
-					(item.item_name.toLowerCase().includes("gnr") ||
-						item.item_name.toLowerCase().includes("gazole") ||
-						item.item_name.toLowerCase().includes("fioul"))))
-		);
+	const dialog = new frappe.ui.Dialog({
+		title: __("🔄 Annulation Facture + GNR"),
+		fields: [
+			{
+				fieldname: "info",
+				fieldtype: "HTML",
+				options: `
+                    <div class="alert alert-info">
+                        <h6><i class="fa fa-info-circle"></i> Mouvements GNR détectés</h6>
+                        <p>Cette facture est liée à <strong>${gnr_movements.length} mouvement(s) GNR</strong> :</p>
+                        <div style="margin: 10px 0; padding: 10px; background: #f8f9fa; border-radius: 4px;">
+                            ${movements_list}
+                        </div>
+                    </div>
+                `,
+			},
+			{
+				fieldname: "section_break",
+				fieldtype: "Section Break",
+			},
+			{
+				fieldname: "action_type",
+				label: "Action à effectuer",
+				fieldtype: "Select",
+				options: [
+					"",
+					"🔄 Annuler automatiquement tout (mouvements + facture)",
+					"📋 Annuler seulement les mouvements GNR",
+					"❌ Annulation normale (vous gérez les mouvements manuellement)",
+				],
+				reqd: 1,
+			},
+			{
+				fieldname: "column_break",
+				fieldtype: "Column Break",
+			},
+			{
+				fieldname: "confirm_action",
+				fieldtype: "Check",
+				label: "✅ Je confirme cette action",
+				default: 0,
+			},
+		],
+		size: "large",
+		primary_action_label: __("Exécuter"),
+		primary_action: function (data) {
+			if (!data.confirm_action) {
+				frappe.msgprint({
+					title: __("Confirmation requise"),
+					message: __("Veuillez cocher la case de confirmation"),
+					indicator: "red",
+				});
+				return;
+			}
+
+			dialog.hide();
+			execute_gnr_action(frm, data.action_type);
+		},
+		secondary_action_label: __("Fermer"),
+		secondary_action: function () {
+			dialog.hide();
+		},
 	});
 
-	if (gnr_items.length > 0) {
-		frm.dashboard.add_indicator(__("Articles GNR: {0}", [gnr_items.length]), "orange");
-
-		// Calculer la valeur totale GNR
-		let total_gnr = gnr_items.reduce((sum, item) => sum + (item.amount || 0), 0);
-		frm.dashboard.add_indicator(__("Montant GNR: {0}", [format_currency(total_gnr)]), "blue");
-	}
+	dialog.show();
 }
 
-function analyze_gnr_items(frm) {
-	let gnr_items = [];
+function execute_gnr_action(frm, action_type) {
+	if (action_type.includes("Annuler automatiquement tout")) {
+		// Annulation complète
+		frappe.show_progress(__("Annulation"), 0, __("Début du processus..."));
 
-	frm.doc.items.forEach(function (item) {
-		// Vérifier si l'article est potentiellement GNR
-		if (is_potential_gnr_item(item)) {
-			gnr_items.push({
-				item_code: item.item_code,
-				item_name: item.item_name,
-				qty: item.qty,
-				rate: item.rate,
-				amount: item.amount,
-			});
-		}
-	});
+		frappe.call({
+			method: "gnr_compliance.utils.gnr_cancel_helper.cancel_invoice_with_gnr",
+			args: {
+				doctype: "Sales Invoice",
+				name: frm.doc.name,
+			},
+			callback: function (r) {
+				frappe.hide_progress();
 
-	if (gnr_items.length > 0) {
-		// Afficher un dialog avec les articles GNR détectés
-		let dialog = new frappe.ui.Dialog({
-			title: __("Articles GNR Détectés"),
-			fields: [
-				{
-					fieldtype: "HTML",
-					fieldname: "gnr_items_html",
-				},
-			],
+				if (r.message && r.message.success) {
+					frappe.show_alert({
+						message: __("✅ " + r.message.message),
+						indicator: "green",
+					});
+					setTimeout(() => frm.reload_doc(), 1000);
+				} else {
+					frappe.msgprint({
+						title: __("Erreur"),
+						message: r.message ? r.message.message : __("Erreur lors de l'annulation"),
+						indicator: "red",
+					});
+				}
+			},
 		});
+	} else if (action_type.includes("Annuler seulement les mouvements")) {
+		// Annulation des mouvements seulement
+		frappe.show_progress(__("Annulation GNR"), 0, __("Annulation des mouvements..."));
 
-		let html =
-			'<table class="table table-bordered"><thead><tr>' +
-			"<th>Code Article</th><th>Nom</th><th>Qté</th><th>Prix</th><th>Montant</th>" +
-			"</tr></thead><tbody>";
+		frappe.call({
+			method: "gnr_compliance.utils.gnr_cancel_helper.cancel_related_gnr_movements",
+			args: {
+				doctype: "Sales Invoice",
+				name: frm.doc.name,
+			},
+			callback: function (r) {
+				frappe.hide_progress();
 
-		gnr_items.forEach(function (item) {
-			html += `<tr>
-                <td>${item.item_code}</td>
-                <td>${item.item_name}</td>
-                <td>${item.qty}</td>
-                <td>${format_currency(item.rate)}</td>
-                <td>${format_currency(item.amount)}</td>
-            </tr>`;
+				if (r.message !== undefined) {
+					frappe.show_alert({
+						message: __(`✅ ${r.message} mouvement(s) GNR annulé(s)`),
+						indicator: "green",
+					});
+
+					frappe.msgprint({
+						title: __("Mouvements annulés"),
+						message: __(
+							"Les mouvements GNR ont été annulés. Vous pouvez maintenant annuler la facture normalement."
+						),
+						indicator: "blue",
+					});
+				} else {
+					frappe.msgprint({
+						title: __("Erreur"),
+						message: __("Erreur lors de l'annulation des mouvements"),
+						indicator: "red",
+					});
+				}
+			},
 		});
-
-		html += "</tbody></table>";
-		dialog.fields_dict.gnr_items_html.$wrapper.html(html);
-		dialog.show();
 	} else {
-		frappe.msgprint(__("Aucun article GNR détecté dans cette facture."));
+		// Annulation normale - juste un message d'info
+		frappe.msgprint({
+			title: __("Action requise"),
+			message: __(
+				"Pour annuler cette facture, vous devez d'abord annuler manuellement les mouvements GNR dans :<br><br><strong>Menu GNR → Mouvement GNR</strong>"
+			),
+			indicator: "orange",
+		});
 	}
-}
-
-function is_potential_gnr_item(item) {
-	if (!item.item_code && !item.item_name) return false;
-
-	const gnr_keywords = ["gnr", "gazole", "fioul", "adblue", "combustible"];
-	const item_text = (item.item_code + " " + (item.item_name || "")).toLowerCase();
-
-	return gnr_keywords.some((keyword) => item_text.includes(keyword));
-}
-
-function setup_gnr_item_filters(frm) {
-	// Configuration des filtres pour les articles GNR
-	// À implémenter selon les besoins spécifiques
 }
