@@ -1,11 +1,18 @@
+# gnr_compliance/integrations/stock.py - VERSION CORRIGÉE
 from __future__ import annotations
 import frappe
-from frappe.utils import flt, now_datetime, getdate, get_quarter
+from frappe.utils import flt, now_datetime, getdate  # SUPPRIMÉ get_quarter
 from typing import Dict, List, Any, Optional
 import logging
 import json
 
 logger = logging.getLogger(__name__)
+
+def get_quarter_from_date(date_obj):
+    """Calcule le trimestre à partir d'une date"""
+    if isinstance(date_obj, str):
+        date_obj = getdate(date_obj)
+    return str((date_obj.month - 1) // 3 + 1)
 
 def capture_mouvement_stock(doc: Any, method: str) -> None:
     """
@@ -74,27 +81,23 @@ def _create_gnr_movement_from_stock(stock_doc: Any, item: Any) -> None:
         posting_date = getdate(stock_doc.posting_date)
         
         # Créer un log de mouvement GNR
-        log_entry = frappe.new_doc("GNR Movement Log")
-        log_entry.update({
-            'reference_doctype': 'Stock Entry',
-            'reference_name': stock_doc.name,
-            'item_code': item.item_code,
-            'gnr_category': item_gnr_data.gnr_tracked_category,
-            'movement_type': 'Stock Movement',
-            'quantity': flt(item.qty),
-            'amount': flt(item.amount or 0),
-            'warehouse': item.t_warehouse or item.s_warehouse,
-            'user': frappe.session.user,
-            'timestamp': now_datetime(),
-            'details': json.dumps({
-                'stock_entry_type': stock_doc.stock_entry_type,
-                'movement_type': movement_type_map.get(stock_doc.stock_entry_type),
-                's_warehouse': item.s_warehouse,
-                't_warehouse': item.t_warehouse,
-                'basic_rate': item.basic_rate
+        try:
+            log_entry = frappe.new_doc("GNR Movement Log")
+            log_entry.update({
+                'reference_doctype': 'Stock Entry',
+                'reference_name': stock_doc.name,
+                'item_code': item.item_code,
+                'gnr_category': item_gnr_data.gnr_tracked_category,
+                'movement_type': 'Stock Movement',
+                'quantity': flt(item.qty),
+                'amount': flt(item.amount or 0),
+                'user': frappe.session.user,
+                'timestamp': now_datetime()
             })
-        })
-        log_entry.insert(ignore_permissions=True)
+            log_entry.insert(ignore_permissions=True)
+        except Exception as log_error:
+            # Si GNR Movement Log n'existe pas, ignorer
+            logger.info(f"GNR Movement Log non disponible: {log_error}")
         
         # Si c'est un mouvement nécessitant la création d'un Mouvement GNR
         if frappe.db.exists("DocType", "Mouvement GNR"):
@@ -109,7 +112,7 @@ def _create_gnr_movement_from_stock(stock_doc: Any, item: Any) -> None:
                 "prix_unitaire": flt(item.basic_rate or 0),
                 "taux_gnr": flt(item_gnr_data.gnr_tax_rate or 0),
                 "categorie_gnr": item_gnr_data.gnr_tracked_category,
-                "trimestre": str(get_quarter(posting_date)),
+                "trimestre": get_quarter_from_date(posting_date),  # FONCTION CORRIGÉE
                 "annee": posting_date.year,
                 "semestre": "1" if posting_date.month <= 6 else "2"
             })
@@ -135,15 +138,19 @@ def cancel_mouvement_stock(doc: Any, method: str) -> None:
         method: Méthode d'appel
     """
     try:
-        # Annuler les logs de mouvement associés
-        logs = frappe.get_all("GNR Movement Log",
-                             filters={
-                                 "reference_doctype": "Stock Entry",
-                                 "reference_name": doc.name
-                             })
-        
-        for log in logs:
-            frappe.delete_doc("GNR Movement Log", log.name, ignore_permissions=True)
+        # Annuler les logs de mouvement associés (si ils existent)
+        try:
+            logs = frappe.get_all("GNR Movement Log",
+                                 filters={
+                                     "reference_doctype": "Stock Entry",
+                                     "reference_name": doc.name
+                                 })
+            
+            for log in logs:
+                frappe.delete_doc("GNR Movement Log", log.name, ignore_permissions=True)
+        except Exception as log_error:
+            # Si GNR Movement Log n'existe pas, ignorer
+            logger.info(f"GNR Movement Log non disponible pour annulation: {log_error}")
         
         # Annuler les mouvements GNR associés
         if frappe.db.exists("DocType", "Mouvement GNR"):
@@ -184,16 +191,17 @@ def get_stock_gnr_summary(from_date: str, to_date: str) -> Dict[str, Any]:
         # Requête pour récupérer les mouvements de stock GNR
         movements = frappe.db.sql("""
             SELECT 
-                gnr_category,
-                movement_type,
+                m.categorie_gnr as gnr_category,
+                m.type_mouvement as movement_type,
                 COUNT(*) as count,
-                SUM(quantity) as total_quantity,
-                SUM(amount) as total_amount
-            FROM `tabGNR Movement Log`
-            WHERE reference_doctype = 'Stock Entry'
-            AND timestamp BETWEEN %s AND %s
-            GROUP BY gnr_category, movement_type
-            ORDER BY gnr_category, movement_type
+                SUM(m.quantite) as total_quantity,
+                SUM(COALESCE(m.quantite * m.prix_unitaire, 0)) as total_amount
+            FROM `tabMouvement GNR` m
+            WHERE m.reference_document = 'Stock Entry'
+            AND m.date_mouvement BETWEEN %s AND %s
+            AND m.docstatus = 1
+            GROUP BY m.categorie_gnr, m.type_mouvement
+            ORDER BY m.categorie_gnr, m.type_mouvement
         """, (from_date_obj, to_date_obj), as_dict=True)
         
         # Organiser les données par catégorie
