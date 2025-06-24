@@ -25,9 +25,23 @@ frappe.ui.form.on("Declaration Periode GNR", {
 				button_text = "📋 Export Annuel";
 			}
 
-			frm.add_custom_button(button_text, function () {
-				export_excel(frm);
-			}).addClass("btn-success");
+			// Bouton export CSV
+			frm.add_custom_button(
+				button_text + " (CSV)",
+				function () {
+					export_format(frm, "csv");
+				},
+				__("Exports")
+			).addClass("btn-success");
+
+			// Bouton export HTML (pour impression/PDF)
+			frm.add_custom_button(
+				button_text + " (HTML)",
+				function () {
+					export_format(frm, "html");
+				},
+				__("Exports")
+			).addClass("btn-info");
 		}
 
 		// Afficher résumé si soumis
@@ -160,14 +174,18 @@ function generer_declaration(frm) {
 		});
 }
 
-function export_excel(frm) {
-	frappe.show_progress("Export...", 70, "Génération du fichier réglementaire");
+function export_format(frm, format_type) {
+	let format_label = format_type === "html" ? "HTML (impression/PDF)" : "CSV (Excel)";
 
-	frm.call("generer_export_reglementaire")
+	frappe.show_progress("Export...", 70, `Génération du fichier ${format_label}`);
+
+	frm.call("generer_export_reglementaire", {
+		format_export: format_type,
+	})
 		.then((r) => {
 			frappe.hide_progress();
 
-			if (r.message) {
+			if (r.message && r.message.success) {
 				if (r.message.arrete_url && r.message.clients_url) {
 					// Export annuel - deux fichiers
 					frappe.msgprint({
@@ -189,23 +207,68 @@ function export_excel(frm) {
 					}
 
 					frappe.show_alert({
-						message: `${type_doc} généré avec succès`,
+						message: `${type_doc} généré avec succès (${format_label})`,
 						indicator: "green",
 					});
 
-					// Ouvrir le fichier
-					window.open(r.message.file_url);
+					// Différent comportement selon le format
+					if (format_type === "html") {
+						// Pour HTML, ouvrir dans un nouvel onglet
+						window.open(r.message.file_url, "_blank");
+
+						frappe.msgprint({
+							title: "Export HTML Généré",
+							message: `
+							<p><strong>${r.message.message}</strong></p>
+							<p>Le fichier HTML s'est ouvert dans un nouvel onglet.</p>
+							<p><em>💡 Astuce: Utilisez Ctrl+P pour imprimer ou sauvegarder en PDF</em></p>
+							<p><a href="${r.message.file_url}" target="_blank" class="btn btn-info">
+								🌐 Rouvrir le fichier
+							</a></p>
+						`,
+							indicator: "blue",
+						});
+					} else {
+						// Pour CSV, afficher le lien de téléchargement
+						frappe.msgprint({
+							title: "Export CSV Généré",
+							message: `
+							<p><strong>${r.message.message}</strong></p>
+							<p><a href="${r.message.file_url}" target="_blank" class="btn btn-primary">
+								📥 Télécharger ${r.message.file_name}
+							</a></p>
+							<p><small><em>Format: CSV (compatible Excel) - Cliquez pour télécharger</em></small></p>
+						`,
+							indicator: "green",
+						});
+					}
 				}
+			} else {
+				// Gestion des erreurs
+				frappe.msgprint({
+					title: "Export Échoué",
+					message: r.message
+						? r.message.message
+						: "Erreur inconnue lors de la génération",
+					indicator: "red",
+				});
 			}
 		})
 		.catch((error) => {
 			frappe.hide_progress();
+			console.error("Erreur export:", error);
 			frappe.msgprint({
 				title: "Erreur Export",
-				message: "Erreur lors de la génération de l'export réglementaire",
+				message:
+					"Erreur lors de la génération de l'export réglementaire. Vérifiez qu'il y a des données pour cette période.",
 				indicator: "red",
 			});
 		});
+}
+
+// Gardons l'ancienne fonction pour compatibilité
+function export_excel(frm) {
+	export_format(frm, "csv");
 }
 
 function afficher_resume(frm) {

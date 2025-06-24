@@ -172,33 +172,59 @@ class DeclarationPeriodeGNR(Document):
             return {"error": str(e)}
 
     @frappe.whitelist()
-    def generer_export_reglementaire(self):
-        """Génère l'export selon le type de période"""
+    def generer_export_reglementaire(self, format_export="csv"):
+        """Génère l'export selon le type de période et format"""
         
-        if self.type_periode == "Trimestriel":
-            # Générer l'Arrêté Trimestriel de Stock Détaillé
-            return generer_arrete_trimestriel_simple(self.date_debut, self.date_fin)
+        try:
+            if self.type_periode == "Trimestriel":
+                # Générer l'Arrêté Trimestriel de Stock Détaillé
+                if format_export == "html":
+                    from gnr_compliance.utils.export_simple import generer_export_html
+                    return generer_export_html(self.date_debut, self.date_fin, "arrete")
+                else:
+                    return generer_arrete_trimestriel_simple(self.date_debut, self.date_fin)
+                
+            elif self.type_periode == "Semestriel":
+                # Générer la Liste Semestrielle des Clients
+                if not self.inclure_details_clients:
+                    frappe.throw("La liste des clients est obligatoire pour les déclarations semestrielles")
+                
+                if format_export == "html":
+                    from gnr_compliance.utils.export_simple import generer_export_html
+                    return generer_export_html(self.date_debut, self.date_fin, "clients")
+                else:
+                    return generer_liste_clients_simple(self.date_debut, self.date_fin)
+                
+            elif self.type_periode == "Annuel":
+                # Pour l'annuel, on peut générer les deux
+                arrete = generer_arrete_trimestriel_simple(self.date_debut, self.date_fin)
+                liste_clients = generer_liste_clients_simple(self.date_debut, self.date_fin)
+                
+                if arrete.get("success") and liste_clients.get("success"):
+                    return {
+                        "success": True,
+                        "arrete_url": arrete["file_url"],
+                        "clients_url": liste_clients["file_url"],
+                        "message": "Deux fichiers générés : Arrêté annuel et Liste clients"
+                    }
+                else:
+                    return {
+                        "success": False,
+                        "message": "Erreur lors de la génération des exports annuels"
+                    }
             
-        elif self.type_periode == "Semestriel":
-            # Générer la Liste Semestrielle des Clients
-            if not self.inclure_details_clients:
-                frappe.throw("La liste des clients est obligatoire pour les déclarations semestrielles")
-            
-            return generer_liste_clients_simple(self.date_debut, self.date_fin)
-            
-        elif self.type_periode == "Annuel":
-            # Pour l'annuel, on peut générer les deux
-            arrete = generer_arrete_trimestriel_simple(self.date_debut, self.date_fin)
-            liste_clients = generer_liste_clients_simple(self.date_debut, self.date_fin)
-            
+            else:
+                return {
+                    "success": False,
+                    "message": "Type de période non supporté pour l'export"
+                }
+                
+        except Exception as e:
+            frappe.log_error(f"Erreur export réglementaire: {str(e)}")
             return {
-                "arrete_url": arrete["file_url"],
-                "clients_url": liste_clients["file_url"],
-                "message": "Deux fichiers générés : Arrêté annuel et Liste clients"
+                "success": False,
+                "message": f"Erreur: {str(e)}"
             }
-        
-        else:
-            frappe.throw("Type de période non supporté pour l'export")
     
     def before_submit(self):
         """Validations avant soumission"""
