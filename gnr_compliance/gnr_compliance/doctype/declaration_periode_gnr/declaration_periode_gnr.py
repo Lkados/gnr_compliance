@@ -107,4 +107,4 @@ class DeclarationPeriodeGNR(Document):
     
     def on_cancel(self):
         """Actions après annulation"""
-        self.statut = "Annulée"
+        self.statut = "Annulée" 
