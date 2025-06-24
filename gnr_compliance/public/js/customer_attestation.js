@@ -9,7 +9,7 @@ frappe.ui.form.on("Customer", {
 		afficher_attestation(frm);
 	},
 
-	custom_n_dossier: function (frm) {
+	custom_n_dossier_: function (frm) {
 		afficher_attestation(frm);
 	},
 });
@@ -19,7 +19,7 @@ function afficher_attestation(frm) {
 	$("#attestation-banner").remove();
 
 	// Vérifier si les deux champs sont remplis
-	if (frm.doc.custom_date_de_depot && frm.doc.custom_n_dossier) {
+	if (frm.doc.custom_date_de_depot && frm.doc.custom_n_dossier_) {
 		// CSS pour le clignotement
 		const css = `
 			<style>
