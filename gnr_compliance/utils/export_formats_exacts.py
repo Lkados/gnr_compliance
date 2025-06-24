@@ -1,12 +1,9 @@
 # gnr_compliance/utils/export_formats_exacts.py
-# Reproduction exacte des formats Excel originaux
+# Reproduction exacte des formats Excel originaux AVEC VRAIS TAUX
 
 import frappe
 from frappe.utils import getdate, flt, format_date
 from datetime import datetime, timedelta
-import openpyxl
-from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
-from openpyxl.utils import get_column_letter
 from io import BytesIO
 
 @frappe.whitelist()
@@ -14,6 +11,7 @@ def generer_declaration_trimestrielle_exacte(from_date, to_date):
     """
     Génère la Déclaration Trimestrielle au format exact
     Comptabilité Matière - Gasoil Non Routier
+    AVEC RÉCUPÉRATION DES VRAIS TAUX ET MONTANTS
     """
     try:
         # Vérifier que openpyxl est disponible
@@ -63,12 +61,14 @@ def generer_declaration_trimestrielle_exacte(from_date, to_date):
         ws['A3'] = f"Société : {company_name}"
         ws['A3'].font = header_font
         
-        # Ligne 4 : Numéro d'autorisation
-        numero_autorisation = "08/2024/AMIENS"  # Valeur par défaut
+        # Ligne 4 : Numéro d'autorisation (récupéré des paramètres ou par défaut)
         try:
-            numero_autorisation = frappe.get_single_value("GNR Settings", "numero_autorisation") or numero_autorisation
+            numero_autorisation = frappe.get_single_value("GNR Settings", "numero_autorisation")
         except:
-            pass  # Utiliser la valeur par défaut
+            numero_autorisation = None
+        
+        if not numero_autorisation:
+            numero_autorisation = "08/2024/AMIENS"  # Valeur par défaut
         
         ws['A4'] = f"Numéro d'autorisation : {numero_autorisation}"
         ws['A4'].font = normal_font
@@ -95,11 +95,11 @@ def generer_declaration_trimestrielle_exacte(from_date, to_date):
             cell.alignment = center_align
             cell.border = thin_border
         
-        # === DONNÉES ===
+        # === DONNÉES AVEC VRAIS MONTANTS ===
         try:
-            mouvements_journaliers = calculer_mouvements_journaliers(from_date, to_date)
+            mouvements_journaliers = calculer_mouvements_journaliers_reels(from_date, to_date)
         except Exception as e:
-            frappe.log_error(f"Erreur calcul mouvements: {str(e)}")
+            frappe.log_error(f"Erreur calcul mouvements réels: {str(e)}")
             mouvements_journaliers = []
         
         row = 9
@@ -130,20 +130,20 @@ def generer_declaration_trimestrielle_exacte(from_date, to_date):
             ws.cell(row=row, column=7, value=mouvement.get('sorties', 0)).border = thin_border
             ws.cell(row=row, column=7).number_format = '#,##0'
             
-            # AGRICOLE/FORESTIER
-            ws.cell(row=row, column=8, value=mouvement.get('volume_agricole', 0)).border = thin_border
+            # AGRICOLE/FORESTIER (VOLUMES RÉELS AVEC ATTESTATION)
+            ws.cell(row=row, column=8, value=mouvement.get('volume_agricole_reel', 0)).border = thin_border
             ws.cell(row=row, column=8).number_format = '#,##0'
             
             # Volume agricole (répétition pour clarté)
-            ws.cell(row=row, column=9, value=mouvement.get('volume_agricole', 0)).border = thin_border
+            ws.cell(row=row, column=9, value=mouvement.get('volume_agricole_reel', 0)).border = thin_border
             ws.cell(row=row, column=9).number_format = '#,##0'
             
-            # Sans Attestation
-            ws.cell(row=row, column=10, value=mouvement.get('volume_sans_attestation', 0)).border = thin_border
+            # Sans Attestation (VOLUMES RÉELS SANS ATTESTATION)
+            ws.cell(row=row, column=10, value=mouvement.get('volume_sans_attestation_reel', 0)).border = thin_border
             ws.cell(row=row, column=10).number_format = '#,##0'
             
             # Volume sans attestation (répétition)
-            ws.cell(row=row, column=11, value=mouvement.get('volume_sans_attestation', 0)).border = thin_border
+            ws.cell(row=row, column=11, value=mouvement.get('volume_sans_attestation_reel', 0)).border = thin_border
             ws.cell(row=row, column=11).number_format = '#,##0'
             
             row += 1
@@ -174,17 +174,18 @@ def generer_declaration_trimestrielle_exacte(from_date, to_date):
             "success": True,
             "file_url": file_doc.file_url,
             "file_name": file_name,
-            "message": f"Déclaration trimestrielle générée - {len(mouvements_journaliers)} jours"
+            "message": f"Déclaration trimestrielle générée avec taux réels - {len(mouvements_journaliers)} jours"
         }
         
     except Exception as e:
-        frappe.log_error(f"Erreur génération déclaration trimestrielle: {str(e)}")
+        frappe.log_error(f"Erreur génération déclaration trimestrielle réelle: {str(e)}")
         return {"success": False, "message": f"Erreur: {str(e)}"}
 
 @frappe.whitelist()
 def generer_liste_semestrielle_exacte(from_date, to_date):
     """
     Génère la Liste Semestrielle des Clients au format exact
+    AVEC RÉCUPÉRATION DES VRAIS TARIFS ET MONTANTS
     """
     try:
         # Vérifier que openpyxl est disponible
@@ -199,11 +200,11 @@ def generer_liste_semestrielle_exacte(from_date, to_date):
                 "message": "Module openpyxl non installé. Exécutez : bench pip install openpyxl"
             }
         
-        # Récupérer les données clients avec distinction attestation
+        # Récupérer les données clients avec VRAIS TARIFS
         try:
-            clients_data = get_clients_avec_attestation(from_date, to_date)
+            clients_data = get_clients_avec_attestation_reels(from_date, to_date)
         except Exception as e:
-            frappe.log_error(f"Erreur récupération clients: {str(e)}")
+            frappe.log_error(f"Erreur récupération clients réels: {str(e)}")
             clients_data = []
         
         if not clients_data:
@@ -231,7 +232,7 @@ def generer_liste_semestrielle_exacte(from_date, to_date):
             ["Informations distributeur autorisé ou fournisseur", "", "Informations client", "", "Données carburant GNR", ""],
             ["Raison sociale", "SIREN", "Raison sociale du client", "SIREN du client", 
              "Volumes (en hL) de GNR livrés au client au cours du dernier semestre civil écoulé", 
-             "Tarif d'accise appliqué (en euro par hectolitres)"]
+             "Tarif d'accise RÉEL appliqué (en euro par hectolitres)"]
         ]
         
         # Première ligne d'en-têtes (groupements)
@@ -260,16 +261,17 @@ def generer_liste_semestrielle_exacte(from_date, to_date):
             cell.alignment = center_align
             cell.border = thin_border
         
-        # === DONNÉES CLIENTS ===
+        # === DONNÉES CLIENTS AVEC VRAIS TARIFS ===
         # Récupérer le nom de la société
         try:
             company = frappe.get_single("Global Defaults").default_company
             company_doc = frappe.get_doc("Company", company) if company else None
             company_name = company_doc.company_name if company_doc else "ETS STEPHANE JOSSEAUME"
+            # Récupérer le SIREN de la société si disponible
+            company_siren = company_doc.tax_id if company_doc and hasattr(company_doc, 'tax_id') else ""
         except:
             company_name = "ETS STEPHANE JOSSEAUME"
-        
-        company_siren = ""  # À récupérer depuis les paramètres société si disponible
+            company_siren = ""
         
         row = 3
         for client in clients_data:
@@ -293,16 +295,15 @@ def generer_liste_semestrielle_exacte(from_date, to_date):
             ws.cell(row=row, column=5, value=volume_hl).border = thin_border
             ws.cell(row=row, column=5).number_format = '#,##0.00'
             
-            # Tarif d'accise (selon attestation)
-            avec_attestation = client.get('avec_attestation', 0)
-            tarif = 3.86 if avec_attestation else 24.81
-            ws.cell(row=row, column=6, value=tarif).border = thin_border
+            # VRAI TARIF D'ACCISE CALCULÉ DEPUIS LES MOUVEMENTS RÉELS
+            tarif_reel = client.get('taux_reel_par_hl', 0)
+            ws.cell(row=row, column=6, value=tarif_reel).border = thin_border
             ws.cell(row=row, column=6).number_format = '#,##0.00'
             
             row += 1
         
         # === AJUSTEMENTS COLONNES ===
-        column_widths = [25, 15, 30, 15, 35, 25]
+        column_widths = [25, 15, 30, 15, 35, 30]
         for i, width in enumerate(column_widths, 1):
             ws.column_dimensions[get_column_letter(i)].width = width
         
@@ -327,26 +328,45 @@ def generer_liste_semestrielle_exacte(from_date, to_date):
             "success": True,
             "file_url": file_doc.file_url,
             "file_name": file_name,
-            "message": f"Liste semestrielle générée - {len(clients_data)} clients"
+            "message": f"Liste semestrielle générée avec tarifs réels - {len(clients_data)} clients"
         }
         
     except Exception as e:
-        frappe.log_error(f"Erreur génération liste semestrielle: {str(e)}")
+        frappe.log_error(f"Erreur génération liste semestrielle réelle: {str(e)}")
         return {"success": False, "message": f"Erreur: {str(e)}"}
 
-def calculer_mouvements_journaliers(from_date, to_date):
-    """Calcule les mouvements jour par jour avec stocks"""
-    
+def calculer_mouvements_journaliers_reels(from_date, to_date):
+    """
+    Calcule les mouvements jour par jour avec stocks ET VRAIS MONTANTS
+    """
     try:
-        # Récupérer tous les mouvements de la période avec l'info attestation du client
-        # Un client a une attestation si custom_n_dossier_ ET custom_date_de_depot sont remplis
+        # Récupérer tous les mouvements de la période AVEC LES VRAIS TAUX ET MONTANTS
         mouvements = frappe.db.sql("""
             SELECT 
                 DATE(m.date_mouvement) as date_mouvement,
                 SUM(CASE WHEN m.type_mouvement IN ('Achat', 'Entrée') THEN m.quantite ELSE 0 END) as entrees,
                 SUM(CASE WHEN m.type_mouvement IN ('Vente', 'Sortie') THEN m.quantite ELSE 0 END) as sorties,
-                SUM(CASE WHEN m.type_mouvement = 'Vente' AND (c.custom_n_dossier_ IS NOT NULL AND c.custom_n_dossier_ != '' AND c.custom_date_de_depot IS NOT NULL) THEN m.quantite ELSE 0 END) as volume_agricole,
-                SUM(CASE WHEN m.type_mouvement = 'Vente' AND (c.custom_n_dossier_ IS NULL OR c.custom_n_dossier_ = '' OR c.custom_date_de_depot IS NULL) THEN m.quantite ELSE 0 END) as volume_sans_attestation
+                -- VOLUMES RÉELS BASÉS SUR LES CHAMPS ATTESTATION DU CLIENT
+                SUM(CASE 
+                    WHEN m.type_mouvement = 'Vente' 
+                    AND (c.custom_n_dossier_ IS NOT NULL AND c.custom_n_dossier_ != '' AND c.custom_date_de_depot IS NOT NULL) 
+                    THEN m.quantite 
+                    ELSE 0 
+                END) as volume_agricole_reel,
+                SUM(CASE 
+                    WHEN m.type_mouvement = 'Vente' 
+                    AND (c.custom_n_dossier_ IS NULL OR c.custom_n_dossier_ = '' OR c.custom_date_de_depot IS NULL) 
+                    THEN m.quantite 
+                    ELSE 0 
+                END) as volume_sans_attestation_reel,
+                -- MONTANTS RÉELS DE TAXE
+                SUM(COALESCE(m.montant_taxe_gnr, 0)) as montant_taxe_reel,
+                -- CHIFFRE D'AFFAIRES RÉEL
+                SUM(CASE 
+                    WHEN m.type_mouvement = 'Vente' 
+                    THEN COALESCE(m.quantite * m.prix_unitaire, 0) 
+                    ELSE 0 
+                END) as ca_reel
             FROM `tabMouvement GNR` m
             LEFT JOIN `tabCustomer` c ON m.client = c.name
             WHERE m.date_mouvement BETWEEN %s AND %s
@@ -355,7 +375,7 @@ def calculer_mouvements_journaliers(from_date, to_date):
             ORDER BY DATE(m.date_mouvement)
         """, (from_date, to_date), as_dict=True)
         
-        # Calculer le stock initial (avant la période)
+        # Calculer le stock initial (avant la période) AVEC VRAIS MOUVEMENTS
         try:
             stock_initial_result = frappe.db.sql("""
                 SELECT COALESCE(SUM(
@@ -394,10 +414,13 @@ def calculer_mouvements_journaliers(from_date, to_date):
             if mouvement:
                 entrees = int(mouvement.entrees or 0)
                 sorties = int(mouvement.sorties or 0)
-                volume_agricole = int(mouvement.volume_agricole or 0)
-                volume_sans_attestation = int(mouvement.volume_sans_attestation or 0)
+                volume_agricole_reel = int(mouvement.volume_agricole_reel or 0)
+                volume_sans_attestation_reel = int(mouvement.volume_sans_attestation_reel or 0)
+                montant_taxe_reel = mouvement.montant_taxe_reel or 0
+                ca_reel = mouvement.ca_reel or 0
             else:
-                entrees = sorties = volume_agricole = volume_sans_attestation = 0
+                entrees = sorties = volume_agricole_reel = volume_sans_attestation_reel = 0
+                montant_taxe_reel = ca_reel = 0
             
             stock_initial_jour = int(stock_courant)
             stock_courant += entrees - sorties
@@ -412,8 +435,10 @@ def calculer_mouvements_journaliers(from_date, to_date):
                 'entrees': entrees,
                 'sorties': sorties,
                 'stock_final': stock_final_jour,
-                'volume_agricole': volume_agricole,
-                'volume_sans_attestation': volume_sans_attestation
+                'volume_agricole_reel': volume_agricole_reel,  # VOLUMES RÉELS
+                'volume_sans_attestation_reel': volume_sans_attestation_reel,  # VOLUMES RÉELS
+                'montant_taxe_reel': montant_taxe_reel,
+                'ca_reel': ca_reel
             })
             
             current_date += timedelta(days=1)
@@ -421,67 +446,14 @@ def calculer_mouvements_journaliers(from_date, to_date):
         return resultats
         
     except Exception as e:
-        frappe.log_error(f"Erreur calcul mouvements journaliers: {str(e)}")
+        frappe.log_error(f"Erreur calcul mouvements journaliers réels: {str(e)}")
         return []
-    
-    # Calculer le stock initial (avant la période)
-    stock_initial = frappe.db.sql("""
-        SELECT COALESCE(SUM(
-            CASE 
-                WHEN type_mouvement IN ('Achat', 'Entrée') THEN quantite
-                WHEN type_mouvement IN ('Vente', 'Sortie') THEN -quantite
-                ELSE 0
-            END
-        ), 0) as stock
-        FROM `tabMouvement GNR`
-        WHERE date_mouvement < %s
-        AND docstatus = 1
-    """, (from_date,))[0][0] or 0
-    
-    # Construire les données jour par jour
-    resultats = []
-    stock_courant = stock_initial
-    
-    # Créer toutes les dates de la période
-    current_date = datetime.strptime(from_date, '%Y-%m-%d').date()
-    end_date = datetime.strptime(to_date, '%Y-%m-%d').date()
-    
-    mouvements_dict = {m.date_mouvement: m for m in mouvements}
-    
-    while current_date <= end_date:
-        mouvement = mouvements_dict.get(current_date)
-        
-        if mouvement:
-            entrees = int(mouvement.entrees or 0)
-            sorties = int(mouvement.sorties or 0)
-            volume_agricole = int(mouvement.volume_agricole or 0)
-            volume_sans_attestation = int(mouvement.volume_sans_attestation or 0)
-        else:
-            entrees = sorties = volume_agricole = volume_sans_attestation = 0
-        
-        stock_initial_jour = int(stock_courant)
-        stock_courant += entrees - sorties
-        stock_final_jour = int(stock_courant)
-        
-        # Format de date comme dans l'exemple : "2-janv."
-        date_format = format_date_french(current_date)
-        
-        resultats.append({
-            'date_format': date_format,
-            'stock_initial': stock_initial_jour,
-            'entrees': entrees,
-            'sorties': sorties,
-            'stock_final': stock_final_jour,
-            'volume_agricole': volume_agricole,
-            'volume_sans_attestation': volume_sans_attestation
-        })
-        
-        current_date += timedelta(days=1)
-    
-    return resultats
 
-def get_clients_avec_attestation(from_date, to_date):
-    """Récupère les clients avec distinction attestation/sans attestation selon les champs dossier et date de dépôt"""
+def get_clients_avec_attestation_reels(from_date, to_date):
+    """
+    Récupère les clients avec distinction attestation/sans attestation 
+    ET CALCUL DES VRAIS TARIFS depuis les mouvements GNR
+    """
     try:
         return frappe.db.sql("""
             SELECT 
@@ -489,13 +461,30 @@ def get_clients_avec_attestation(from_date, to_date):
                 COALESCE(c.customer_name, m.client) as nom_client,
                 c.siret,
                 SUM(COALESCE(m.quantite, 0)) as quantite_totale,
+                -- VRAIS MONTANTS DEPUIS LES MOUVEMENTS
+                SUM(COALESCE(m.quantite * m.prix_unitaire, 0)) as montant_ht_reel,
+                SUM(COALESCE(m.montant_taxe_gnr, 0)) as montant_taxe_reel,
+                -- CALCUL DU VRAI TAUX MOYEN PAR HECTOLITRE
+                CASE 
+                    WHEN SUM(m.quantite) > 0 
+                    THEN SUM(COALESCE(m.montant_taxe_gnr, 0)) / (SUM(m.quantite) / 100)  -- Conversion L vers hL
+                    ELSE 0 
+                END as taux_reel_par_hl,
+                -- ATTESTATION BASÉE SUR LES CHAMPS DOSSIER
                 CASE 
                     WHEN c.custom_n_dossier_ IS NOT NULL AND c.custom_n_dossier_ != '' AND c.custom_date_de_depot IS NOT NULL 
                     THEN 1 
                     ELSE 0 
                 END as avec_attestation,
                 c.custom_n_dossier_ as numero_dossier,
-                c.custom_date_de_depot as date_depot
+                c.custom_date_de_depot as date_depot,
+                -- STATISTIQUES ADDITIONNELLES
+                COUNT(DISTINCT m.name) as nb_mouvements,
+                MIN(m.date_mouvement) as premiere_vente,
+                MAX(m.date_mouvement) as derniere_vente,
+                -- TAUX MIN/MAX POUR VÉRIFICATION
+                MIN(m.taux_gnr) as taux_min,
+                MAX(m.taux_gnr) as taux_max
             FROM `tabMouvement GNR` m
             LEFT JOIN `tabCustomer` c ON m.client = c.name
             WHERE m.date_mouvement BETWEEN %s AND %s
@@ -507,7 +496,7 @@ def get_clients_avec_attestation(from_date, to_date):
             ORDER BY c.customer_name
         """, (from_date, to_date), as_dict=True)
     except Exception as e:
-        frappe.log_error(f"Erreur récupération clients avec attestation: {str(e)}")
+        frappe.log_error(f"Erreur récupération clients avec vrais tarifs: {str(e)}")
         return []
 
 def format_date_french(date_obj):
@@ -556,3 +545,195 @@ def determiner_trimestre_text(from_date, to_date):
         return f"{start.year} Juillet à Septembre"
     else:
         return f"{start.year} Octobre à Décembre"
+
+@frappe.whitelist()
+def analyser_coherence_donnees(from_date, to_date):
+    """
+    Analyse la cohérence des données GNR pour une période
+    Utile pour vérifier que les vrais taux sont corrects
+    """
+    try:
+        # Analyser les taux par produit
+        analyse_taux = frappe.db.sql("""
+            SELECT 
+                m.code_produit,
+                i.item_name,
+                COUNT(*) as nb_mouvements,
+                MIN(m.taux_gnr) as taux_min,
+                MAX(m.taux_gnr) as taux_max,
+                AVG(m.taux_gnr) as taux_moyen,
+                SUM(m.quantite) as quantite_totale,
+                SUM(m.montant_taxe_gnr) as taxe_totale,
+                -- Calculer le taux pondéré réel
+                SUM(m.montant_taxe_gnr) / SUM(m.quantite) as taux_pondere_reel,
+                -- Détecter les taux suspects (valeurs par défaut)
+                SUM(CASE WHEN m.taux_gnr IN (1.77, 3.86, 6.83, 2.84, 24.81) THEN 1 ELSE 0 END) as nb_taux_suspects
+            FROM `tabMouvement GNR` m
+            LEFT JOIN `tabItem` i ON m.code_produit = i.name
+            WHERE m.date_mouvement BETWEEN %s AND %s
+            AND m.docstatus = 1
+            AND m.quantite > 0
+            GROUP BY m.code_produit, i.item_name
+            ORDER BY quantite_totale DESC
+        """, (from_date, to_date), as_dict=True)
+        
+        # Analyser les attestations clients
+        analyse_clients = frappe.db.sql("""
+            SELECT 
+                COUNT(DISTINCT m.client) as total_clients,
+                COUNT(DISTINCT CASE 
+                    WHEN c.custom_n_dossier_ IS NOT NULL AND c.custom_n_dossier_ != '' AND c.custom_date_de_depot IS NOT NULL 
+                    THEN m.client 
+                END) as clients_avec_attestation,
+                SUM(CASE 
+                    WHEN c.custom_n_dossier_ IS NOT NULL AND c.custom_n_dossier_ != '' AND c.custom_date_de_depot IS NOT NULL 
+                    THEN m.quantite 
+                    ELSE 0 
+                END) as volume_avec_attestation,
+                SUM(CASE 
+                    WHEN c.custom_n_dossier_ IS NULL OR c.custom_n_dossier_ = '' OR c.custom_date_de_depot IS NULL 
+                    THEN m.quantite 
+                    ELSE 0 
+                END) as volume_sans_attestation
+            FROM `tabMouvement GNR` m
+            LEFT JOIN `tabCustomer` c ON m.client = c.name
+            WHERE m.date_mouvement BETWEEN %s AND %s
+            AND m.docstatus = 1
+            AND m.type_mouvement = 'Vente'
+            AND m.client IS NOT NULL
+        """, (from_date, to_date), as_dict=True)
+        
+        return {
+            "success": True,
+            "periode": f"{from_date} au {to_date}",
+            "analyse_taux": analyse_taux,
+            "analyse_clients": analyse_clients[0] if analyse_clients else {},
+            "resume": {
+                "nb_produits": len(analyse_taux),
+                "total_taux_suspects": sum([p.nb_taux_suspects for p in analyse_taux]),
+                "produits_avec_taux_suspects": len([p for p in analyse_taux if p.nb_taux_suspects > 0])
+            }
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Erreur analyse cohérence: {str(e)}")
+        return {"success": False, "error": str(e)}
+
+@frappe.whitelist() 
+def export_donnees_brutes_excel(from_date, to_date):
+    """
+    Exporte toutes les données brutes GNR en Excel pour analyse
+    """
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+        
+        # Récupérer toutes les données de la période
+        donnees = frappe.db.sql("""
+            SELECT 
+                m.name as mouvement_id,
+                m.date_mouvement,
+                m.type_mouvement,
+                m.code_produit,
+                i.item_name,
+                m.quantite,
+                m.prix_unitaire,
+                m.taux_gnr,
+                m.montant_taxe_gnr,
+                m.client,
+                c.customer_name,
+                c.custom_n_dossier_,
+                c.custom_date_de_depot,
+                CASE 
+                    WHEN c.custom_n_dossier_ IS NOT NULL AND c.custom_n_dossier_ != '' AND c.custom_date_de_depot IS NOT NULL 
+                    THEN 'Avec attestation' 
+                    ELSE 'Sans attestation' 
+                END as statut_attestation,
+                m.reference_document,
+                m.reference_name,
+                m.trimestre,
+                m.annee
+            FROM `tabMouvement GNR` m
+            LEFT JOIN `tabItem` i ON m.code_produit = i.name
+            LEFT JOIN `tabCustomer` c ON m.client = c.name
+            WHERE m.date_mouvement BETWEEN %s AND %s
+            AND m.docstatus = 1
+            ORDER BY m.date_mouvement, m.creation
+        """, (from_date, to_date), as_dict=True)
+        
+        # Créer le classeur Excel
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Données GNR Brutes"
+        
+        # Styles
+        header_font = Font(name="Arial", size=11, bold=True)
+        thin_border = Border(
+            left=Side(style='thin'), right=Side(style='thin'),
+            top=Side(style='thin'), bottom=Side(style='thin')
+        )
+        
+        # En-têtes
+        headers = [
+            "ID Mouvement", "Date", "Type", "Code Produit", "Nom Produit",
+            "Quantité (L)", "Prix Unit. (€)", "Taux GNR (€/L)", "Montant Taxe (€)",
+            "Client", "Nom Client", "N° Dossier", "Date Dépôt", "Statut Attestation",
+            "Doc Référence", "Nom Référence", "Trimestre", "Année"
+        ]
+        
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.border = thin_border
+        
+        # Données
+        for row_idx, donnee in enumerate(donnees, 2):
+            ws.cell(row=row_idx, column=1, value=donnee.mouvement_id).border = thin_border
+            ws.cell(row=row_idx, column=2, value=donnee.date_mouvement).border = thin_border
+            ws.cell(row=row_idx, column=3, value=donnee.type_mouvement).border = thin_border
+            ws.cell(row=row_idx, column=4, value=donnee.code_produit).border = thin_border
+            ws.cell(row=row_idx, column=5, value=donnee.item_name).border = thin_border
+            ws.cell(row=row_idx, column=6, value=donnee.quantite).border = thin_border
+            ws.cell(row=row_idx, column=7, value=donnee.prix_unitaire).border = thin_border
+            ws.cell(row=row_idx, column=8, value=donnee.taux_gnr).border = thin_border
+            ws.cell(row=row_idx, column=9, value=donnee.montant_taxe_gnr).border = thin_border
+            ws.cell(row=row_idx, column=10, value=donnee.client).border = thin_border
+            ws.cell(row=row_idx, column=11, value=donnee.customer_name).border = thin_border
+            ws.cell(row=row_idx, column=12, value=donnee.custom_n_dossier_).border = thin_border
+            ws.cell(row=row_idx, column=13, value=donnee.custom_date_de_depot).border = thin_border
+            ws.cell(row=row_idx, column=14, value=donnee.statut_attestation).border = thin_border
+            ws.cell(row=row_idx, column=15, value=donnee.reference_document).border = thin_border
+            ws.cell(row=row_idx, column=16, value=donnee.reference_name).border = thin_border
+            ws.cell(row=row_idx, column=17, value=donnee.trimestre).border = thin_border
+            ws.cell(row=row_idx, column=18, value=donnee.annee).border = thin_border
+        
+        # Ajuster les largeurs de colonnes
+        for col in range(1, 19):
+            ws.column_dimensions[get_column_letter(col)].width = 15
+        
+        # Sauvegarder
+        output = BytesIO()
+        wb.save(output)
+        output.seek(0)
+        
+        file_name = f"Donnees_GNR_Brutes_{from_date}_{to_date}.xlsx"
+        
+        file_doc = frappe.get_doc({
+            "doctype": "File",
+            "file_name": file_name,
+            "content": output.getvalue(),
+            "is_private": 0
+        })
+        file_doc.save()
+        
+        return {
+            "success": True,
+            "file_url": file_doc.file_url,
+            "file_name": file_name,
+            "message": f"Export données brutes généré - {len(donnees)} mouvements"
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Erreur export données brutes: {str(e)}")
+        return {"success": False, "message": f"Erreur: {str(e)}"}
