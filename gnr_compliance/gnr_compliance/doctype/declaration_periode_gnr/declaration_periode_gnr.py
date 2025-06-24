@@ -3,7 +3,7 @@
 import frappe
 from frappe.model.document import Document
 from frappe.utils import getdate
-from gnr_compliance.utils.export_simple import generer_arrete_trimestriel_simple, generer_liste_clients_simple
+from gnr_compliance.utils.export_formats_exacts import generer_declaration_trimestrielle_exacte, generer_liste_semestrielle_exacte
 
 class DeclarationPeriodeGNR(Document):
     def validate(self):
@@ -54,15 +54,16 @@ class DeclarationPeriodeGNR(Document):
             
             frappe.logger().info(f"Debug Declaration GNR: {count_mouvements} mouvements trouvés entre {self.date_debut} et {self.date_fin}")
             
-            # Calculer les totaux depuis les mouvements GNR
+            # Calculer les totaux depuis les mouvements GNR avec info attestation basée sur les champs dossier
             totaux = frappe.db.sql("""
                 SELECT 
-                    SUM(CASE WHEN type_mouvement = 'Vente' THEN quantite ELSE 0 END) as total_ventes,
-                    SUM(COALESCE(montant_taxe_gnr, 0)) as total_taxe_gnr,
-                    COUNT(DISTINCT CASE WHEN client IS NOT NULL THEN client END) as nb_clients
-                FROM `tabMouvement GNR`
-                WHERE date_mouvement BETWEEN %s AND %s
-                AND docstatus = 1
+                    SUM(CASE WHEN m.type_mouvement = 'Vente' THEN m.quantite ELSE 0 END) as total_ventes,
+                    SUM(COALESCE(m.montant_taxe_gnr, 0)) as total_taxe_gnr,
+                    COUNT(DISTINCT CASE WHEN m.client IS NOT NULL THEN m.client END) as nb_clients
+                FROM `tabMouvement GNR` m
+                LEFT JOIN `tabCustomer` c ON m.client = c.name
+                WHERE m.date_mouvement BETWEEN %s AND %s
+                AND m.docstatus = 1
             """, (self.date_debut, self.date_fin), as_dict=True)
             
             if totaux and len(totaux) > 0:
@@ -124,17 +125,20 @@ class DeclarationPeriodeGNR(Document):
             if not self.date_debut or not self.date_fin:
                 return {"error": "Dates non définies"}
             
-            # Compter les mouvements par type
+            # Compter les mouvements par type avec info attestation basée sur numéro dossier et date dépôt
             mouvements_stats = frappe.db.sql("""
                 SELECT 
-                    type_mouvement,
+                    m.type_mouvement,
                     COUNT(*) as count,
-                    SUM(quantite) as quantite,
-                    SUM(COALESCE(montant_taxe_gnr, 0)) as taxe
-                FROM `tabMouvement GNR`
-                WHERE date_mouvement BETWEEN %s AND %s
-                AND docstatus = 1
-                GROUP BY type_mouvement
+                    SUM(m.quantite) as quantite,
+                    SUM(COALESCE(m.montant_taxe_gnr, 0)) as taxe,
+                    SUM(CASE WHEN m.type_mouvement = 'Vente' AND (c.custom_n_dossier_ IS NOT NULL AND c.custom_n_dossier_ != '' AND c.custom_date_de_depot IS NOT NULL) THEN m.quantite ELSE 0 END) as quantite_avec_attestation,
+                    SUM(CASE WHEN m.type_mouvement = 'Vente' AND (c.custom_n_dossier_ IS NULL OR c.custom_n_dossier_ = '' OR c.custom_date_de_depot IS NULL) THEN m.quantite ELSE 0 END) as quantite_sans_attestation
+                FROM `tabMouvement GNR` m
+                LEFT JOIN `tabCustomer` c ON m.client = c.name
+                WHERE m.date_mouvement BETWEEN %s AND %s
+                AND m.docstatus = 1
+                GROUP BY m.type_mouvement
             """, (self.date_debut, self.date_fin), as_dict=True)
             
             # Calculer les totaux
@@ -142,14 +146,24 @@ class DeclarationPeriodeGNR(Document):
             quantite_totale = sum([m.quantite or 0 for m in mouvements_stats])
             taxe_totale = sum([m.taxe or 0 for m in mouvements_stats])
             
-            # Compter les clients uniques
-            clients_uniques = frappe.db.sql("""
-                SELECT COUNT(DISTINCT client) as count
-                FROM `tabMouvement GNR`
-                WHERE date_mouvement BETWEEN %s AND %s
-                AND docstatus = 1
-                AND client IS NOT NULL
-            """, (self.date_debut, self.date_fin))[0][0] or 0
+            # Totaux avec/sans attestation
+            total_avec_attestation = sum([m.quantite_avec_attestation or 0 for m in mouvements_stats])
+            total_sans_attestation = sum([m.quantite_sans_attestation or 0 for m in mouvements_stats])
+            
+            # Compter les clients uniques avec distinction attestation basée sur les champs dossier
+            clients_stats = frappe.db.sql("""
+                SELECT 
+                    COUNT(DISTINCT m.client) as count,
+                    COUNT(DISTINCT CASE WHEN (c.custom_n_dossier_ IS NOT NULL AND c.custom_n_dossier_ != '' AND c.custom_date_de_depot IS NOT NULL) THEN m.client END) as clients_avec_attestation,
+                    COUNT(DISTINCT CASE WHEN (c.custom_n_dossier_ IS NULL OR c.custom_n_dossier_ = '' OR c.custom_date_de_depot IS NULL) THEN m.client END) as clients_sans_attestation
+                FROM `tabMouvement GNR` m
+                LEFT JOIN `tabCustomer` c ON m.client = c.name
+                WHERE m.date_mouvement BETWEEN %s AND %s
+                AND m.docstatus = 1
+                AND m.client IS NOT NULL
+            """, (self.date_debut, self.date_fin), as_dict=True)
+            
+            clients_data = clients_stats[0] if clients_stats else {}
             
             # Organiser par type
             stats_par_type = {}
@@ -163,7 +177,11 @@ class DeclarationPeriodeGNR(Document):
                 "autres": total_mouvements - stats_par_type.get("Vente", 0) - stats_par_type.get("Achat", 0),
                 "quantite_totale": round(quantite_totale, 2),
                 "taxe_totale": round(taxe_totale, 2),
-                "clients_uniques": clients_uniques,
+                "clients_uniques": clients_data.get("count", 0),
+                "clients_avec_attestation": clients_data.get("clients_avec_attestation", 0),
+                "clients_sans_attestation": clients_data.get("clients_sans_attestation", 0),
+                "volume_avec_attestation": round(total_avec_attestation, 2),
+                "volume_sans_attestation": round(total_sans_attestation, 2),
                 "periode": f"{self.date_debut} au {self.date_fin}"
             }
             
@@ -172,40 +190,32 @@ class DeclarationPeriodeGNR(Document):
             return {"error": str(e)}
 
     @frappe.whitelist()
-    def generer_export_reglementaire(self, format_export="csv"):
-        """Génère l'export selon le type de période et format"""
+    def generer_export_reglementaire(self, format_export="xlsx"):
+        """Génère l'export selon le type de période et format EXACT"""
         
         try:
             if self.type_periode == "Trimestriel":
-                # Générer l'Arrêté Trimestriel de Stock Détaillé
-                if format_export == "html":
-                    from gnr_compliance.utils.export_simple import generer_export_html
-                    return generer_export_html(self.date_debut, self.date_fin, "arrete")
-                else:
-                    return generer_arrete_trimestriel_simple(self.date_debut, self.date_fin)
+                # Générer la Déclaration Trimestrielle au format exact
+                return generer_declaration_trimestrielle_exacte(self.date_debut, self.date_fin)
                 
             elif self.type_periode == "Semestriel":
-                # Générer la Liste Semestrielle des Clients
+                # Générer la Liste Semestrielle des Clients au format exact
                 if not self.inclure_details_clients:
                     frappe.throw("La liste des clients est obligatoire pour les déclarations semestrielles")
                 
-                if format_export == "html":
-                    from gnr_compliance.utils.export_simple import generer_export_html
-                    return generer_export_html(self.date_debut, self.date_fin, "clients")
-                else:
-                    return generer_liste_clients_simple(self.date_debut, self.date_fin)
+                return generer_liste_semestrielle_exacte(self.date_debut, self.date_fin)
                 
             elif self.type_periode == "Annuel":
                 # Pour l'annuel, on peut générer les deux
-                arrete = generer_arrete_trimestriel_simple(self.date_debut, self.date_fin)
-                liste_clients = generer_liste_clients_simple(self.date_debut, self.date_fin)
+                arrete = generer_declaration_trimestrielle_exacte(self.date_debut, self.date_fin)
+                liste_clients = generer_liste_semestrielle_exacte(self.date_debut, self.date_fin)
                 
                 if arrete.get("success") and liste_clients.get("success"):
                     return {
                         "success": True,
                         "arrete_url": arrete["file_url"],
                         "clients_url": liste_clients["file_url"],
-                        "message": "Deux fichiers générés : Arrêté annuel et Liste clients"
+                        "message": "Deux fichiers générés : Déclaration annuelle et Liste clients"
                     }
                 else:
                     return {

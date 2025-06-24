@@ -9,39 +9,38 @@ frappe.ui.form.on("Declaration Periode GNR", {
 			}).addClass("btn-primary");
 
 			// Bouton debug pour vérifier les données disponibles
-			frm.add_custom_button("🔍 Vérifier Données", function () {
-				verifier_donnees_disponibles(frm);
-			}).addClass("btn-secondary");
+			frm.add_custom_button(
+				"🔍 Vérifier Données",
+				function () {
+					verifier_donnees_disponibles(frm);
+				},
+				__("Diagnostic")
+			).addClass("btn-secondary");
+
+			// Bouton pour vérifier les attestations clients
+			frm.add_custom_button(
+				"📋 Attestations Clients",
+				function () {
+					verifier_attestations_clients(frm);
+				},
+				__("Diagnostic")
+			).addClass("btn-info");
 		}
 
 		if (frm.doc.docstatus === 1) {
 			// Texte du bouton selon le type de période
 			let button_text = "📄 Export";
 			if (frm.doc.type_periode === "Trimestriel") {
-				button_text = "📊 Arrêté Trimestriel";
+				button_text = "📊 Déclaration Trimestrielle";
 			} else if (frm.doc.type_periode === "Semestriel") {
-				button_text = "👥 Liste Clients";
+				button_text = "👥 Liste Clients Douane";
 			} else if (frm.doc.type_periode === "Annuel") {
 				button_text = "📋 Export Annuel";
 			}
 
-			// Bouton export CSV
-			frm.add_custom_button(
-				button_text + " (CSV)",
-				function () {
-					export_format(frm, "csv");
-				},
-				__("Exports")
-			).addClass("btn-success");
-
-			// Bouton export HTML (pour impression/PDF)
-			frm.add_custom_button(
-				button_text + " (HTML)",
-				function () {
-					export_format(frm, "html");
-				},
-				__("Exports")
-			).addClass("btn-info");
+			frm.add_custom_button(button_text, function () {
+				export_format_exact(frm);
+			}).addClass("btn-success");
 		}
 
 		// Afficher résumé si soumis
@@ -174,6 +173,73 @@ function generer_declaration(frm) {
 		});
 }
 
+function verifier_attestations_clients(frm) {
+	frappe.show_progress("Vérification...", 50, "Analyse des attestations clients");
+
+	frappe.call({
+		method: "gnr_compliance.utils.verification_attestations.verifier_attestations_clients",
+		callback: function (r) {
+			frappe.hide_progress();
+
+			if (r.message && r.message.success) {
+				let data = r.message;
+
+				let message = `
+					<h5>📋 État des Attestations Clients</h5>
+					
+					<div class="row">
+						<div class="col-sm-4">
+							<h6>📊 Résumé</h6>
+							<ul>
+								<li><strong>Total clients :</strong> ${data.total_clients}</li>
+								<li><strong>🟢 Avec attestation :</strong> ${data.avec_attestation}</li>
+								<li><strong>🔴 Sans attestation :</strong> ${data.sans_attestation}</li>
+								<li><strong>⚠️ Incomplets :</strong> ${data.incomplets}</li>
+							</ul>
+						</div>
+						<div class="col-sm-8">
+							<h6>💰 Impact Tarifs GNR</h6>
+							<p><strong>🟢 Clients avec attestation :</strong> Tarif 3,86€/hL</p>
+							<p><em>N° Dossier + Date de Dépôt remplis</em></p>
+							<p><strong>🔴 Clients sans attestation :</strong> Tarif 24,81€/hL</p>
+							<p><em>N° Dossier OU Date de Dépôt manquant</em></p>
+						</div>
+					</div>
+					
+					${
+						data.incomplets > 0
+							? `<div class="alert alert-warning">
+							<strong>⚠️ ${data.incomplets} client(s) avec dossier incomplet</strong><br>
+							Vérifiez que les champs "N° Dossier" ET "Date de Dépôt" sont bien remplis.
+						</div>`
+							: ""
+					}
+					
+					${
+						data.avec_attestation > 0
+							? `<div class="alert alert-success">
+							✅ ${data.avec_attestation} client(s) bénéficient du tarif réduit GNR
+						</div>`
+							: ""
+					}
+				`;
+
+				frappe.msgprint({
+					title: "Vérification Attestations",
+					message: message,
+					indicator: data.incomplets > 0 ? "orange" : "green",
+				});
+			} else {
+				frappe.msgprint({
+					title: "Erreur",
+					message: r.message ? r.message.message : "Erreur lors de la vérification",
+					indicator: "red",
+				});
+			}
+		},
+	});
+}
+
 function export_format(frm, format_type) {
 	let format_label = format_type === "html" ? "HTML (impression/PDF)" : "CSV (Excel)";
 
@@ -266,9 +332,118 @@ function export_format(frm, format_type) {
 		});
 }
 
-// Gardons l'ancienne fonction pour compatibilité
-function export_excel(frm) {
-	export_format(frm, "csv");
+function export_format_exact(frm) {
+	let doc_type = "";
+	if (frm.doc.type_periode === "Trimestriel") {
+		doc_type = "Déclaration Trimestrielle (Comptabilité Matière)";
+	} else if (frm.doc.type_periode === "Semestriel") {
+		doc_type = "Liste Semestrielle des Clients Douane";
+	} else if (frm.doc.type_periode === "Annuel") {
+		doc_type = "Export Annuel (Déclaration + Liste Clients)";
+	}
+
+	frappe.show_progress("Export...", 70, `Génération ${doc_type}`);
+
+	frm.call("generer_export_reglementaire")
+		.then((r) => {
+			frappe.hide_progress();
+
+			if (r.message && r.message.success) {
+				if (r.message.arrete_url && r.message.clients_url) {
+					// Export annuel - deux fichiers
+					frappe.msgprint({
+						title: "Export Annuel Généré ✅",
+						message: `
+						<p><strong>Deux fichiers Excel ont été générés aux formats exacts :</strong></p>
+						<div style="margin: 15px 0;">
+							<p><a href="${r.message.arrete_url}" target="_blank" class="btn btn-primary" style="margin: 5px;">
+								📊 Déclaration Annuelle (Comptabilité Matière)
+							</a></p>
+							<p><a href="${r.message.clients_url}" target="_blank" class="btn btn-success" style="margin: 5px;">
+								👥 Liste Annuelle des Clients Douane
+							</a></p>
+						</div>
+						<p><small><em>Format Excel (.xlsx) - Conforme aux exigences réglementaires</em></small></p>
+					`,
+						indicator: "green",
+					});
+				} else if (r.message.file_url) {
+					// Export simple
+					frappe.show_alert({
+						message: `${doc_type} généré avec succès`,
+						indicator: "green",
+					});
+
+					// Message détaillé selon le type
+					let details_message = "";
+					if (frm.doc.type_periode === "Trimestriel") {
+						details_message = `
+						<p><strong>✅ Déclaration Trimestrielle générée</strong></p>
+						<p>📋 Format : Comptabilité Matière - Gasoil Non Routier</p>
+						<p>📊 Données : Mouvements jour par jour avec stocks</p>
+						<p>⚖️ Distinction : Volumes avec/sans attestation</p>
+					`;
+					} else if (frm.doc.type_periode === "Semestriel") {
+						details_message = `
+						<p><strong>✅ Liste Semestrielle des Clients générée</strong></p>
+						<p>🏢 Informations distributeur et clients</p>
+						<p>📊 Volumes en hectolitres (hL)</p>
+						<p>💰 Tarifs d'accise : 3,86€ (avec attestation) / 24,81€ (sans attestation)</p>
+					`;
+					}
+
+					frappe.msgprint({
+						title: "Export Généré",
+						message: `
+						${details_message}
+						<div style="margin: 15px 0;">
+							<a href="${r.message.file_url}" target="_blank" class="btn btn-primary">
+								📥 Télécharger ${r.message.file_name}
+							</a>
+						</div>
+						<p><small><em>Format Excel (.xlsx) - Exact selon vos spécifications</em></small></p>
+					`,
+						indicator: "green",
+					});
+				}
+			} else {
+				// Gestion des erreurs
+				frappe.msgprint({
+					title: "Export Échoué ❌",
+					message: r.message
+						? r.message.message
+						: "Erreur inconnue lors de la génération",
+					indicator: "red",
+				});
+			}
+		})
+		.catch((error) => {
+			frappe.hide_progress();
+			console.error("Erreur export:", error);
+
+			let error_details = "";
+			if (error.message && error.message.includes("openpyxl")) {
+				error_details = `
+				<p><strong>Module manquant :</strong> openpyxl</p>
+				<p>Solution : <code>bench pip install openpyxl</code></p>
+			`;
+			}
+
+			frappe.msgprint({
+				title: "Erreur Export",
+				message: `
+				<p>Erreur lors de la génération de l'export réglementaire.</p>
+				${error_details}
+				<p><strong>Vérifications :</strong></p>
+				<ul>
+					<li>Y a-t-il des mouvements GNR pour cette période ?</li>
+					<li>Le module openpyxl est-il installé ?</li>
+					<li>Les champs avec/sans attestation sont-ils remplis ?</li>
+				</ul>
+			`,
+				indicator: "red",
+			});
+		});
 }
 
 function afficher_resume(frm) {
@@ -288,15 +463,24 @@ function afficher_resume(frm) {
 	// Indicateur du type de document généré
 	let doc_type = "";
 	if (frm.doc.type_periode === "Trimestriel") {
-		doc_type = "📊 Génère: Arrêté Trimestriel de Stock Détaillé";
+		doc_type = "📊 Génère: Déclaration Trimestrielle (Comptabilité Matière - GNR)";
 	} else if (frm.doc.type_periode === "Semestriel") {
-		doc_type = "👥 Génère: Liste Semestrielle des Clients Douane";
+		doc_type = "👥 Génère: Liste Semestrielle des Clients Douane (avec tarifs d'accise)";
 	} else if (frm.doc.type_periode === "Annuel") {
-		doc_type = "📋 Génère: Arrêté + Liste Clients";
+		doc_type = "📋 Génère: Déclaration + Liste Clients (formats exacts Excel)";
 	}
 
 	if (doc_type) {
 		frm.dashboard.add_comment(doc_type, "blue", true);
+	}
+
+	// Ajout d'informations sur les tarifs GNR
+	if (frm.doc.type_periode === "Semestriel" || frm.doc.type_periode === "Annuel") {
+		frm.dashboard.add_comment(
+			"💰 Tarifs: 3,86€/hL (N° Dossier + Date Dépôt remplis) - 24,81€/hL (champs manquants)",
+			"orange",
+			true
+		);
 	}
 }
 
@@ -338,10 +522,39 @@ function verifier_donnees_disponibles(frm) {
 					</div>
 				</div>
 				
+				<div class="row">
+					<div class="col-sm-6">
+						<h6>⚖️ Répartition Attestations</h6>
+						<ul>
+							<li><strong>🟢 Avec attestation :</strong> ${
+								data.volume_avec_attestation || 0
+							}L (tarif 3,86€/hL)</li>
+							<li><strong>🔴 Sans attestation :</strong> ${
+								data.volume_sans_attestation || 0
+							}L (tarif 24,81€/hL)</li>
+						</ul>
+					</div>
+					<div class="col-sm-6">
+						<h6>👥 Clients par type</h6>
+						<ul>
+							<li><strong>🟢 Agricoles/Forestiers :</strong> ${data.clients_avec_attestation || 0}</li>
+							<li><strong>🔴 Autres clients :</strong> ${data.clients_sans_attestation || 0}</li>
+						</ul>
+					</div>
+				</div>
+				
 				${
 					data.total_mouvements === 0
 						? '<div class="alert alert-warning">⚠️ Aucun mouvement GNR trouvé pour cette période</div>'
 						: '<div class="alert alert-success">✅ Données disponibles pour génération</div>'
+				}
+				
+				${
+					data.total_mouvements > 0 &&
+					!data.volume_avec_attestation &&
+					!data.volume_sans_attestation
+						? '<div class="alert alert-info">💡 Vérifiez que les champs "N° Dossier" et "Date de Dépôt" sont remplis sur les fiches clients agricoles</div>'
+						: ""
 				}
 			`;
 
