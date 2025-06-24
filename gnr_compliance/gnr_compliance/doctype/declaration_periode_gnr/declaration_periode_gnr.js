@@ -198,11 +198,9 @@ function verifier_attestations_clients(frm) {
 							</ul>
 						</div>
 						<div class="col-sm-8">
-							<h6>💰 Impact Tarifs GNR</h6>
-							<p><strong>🟢 Clients avec attestation :</strong> Tarif 3,86€/hL</p>
-							<p><em>N° Dossier + Date de Dépôt remplis</em></p>
-							<p><strong>🔴 Clients sans attestation :</strong> Tarif 24,81€/hL</p>
-							<p><em>N° Dossier OU Date de Dépôt manquant</em></p>
+							<h6>📋 Information Attestations</h6>
+							<p><strong>🟢 Clients avec attestation :</strong> N° Dossier + Date de Dépôt remplis</p>
+							<p><strong>🔴 Clients sans attestation :</strong> N° Dossier OU Date de Dépôt manquant</p>
 						</div>
 					</div>
 					
@@ -218,7 +216,7 @@ function verifier_attestations_clients(frm) {
 					${
 						data.avec_attestation > 0
 							? `<div class="alert alert-success">
-							✅ ${data.avec_attestation} client(s) bénéficient du tarif réduit GNR
+							✅ ${data.avec_attestation} client(s) avec attestation agricole/forestière
 						</div>`
 							: ""
 					}
@@ -388,7 +386,7 @@ function export_format_exact(frm) {
 						<p><strong>✅ Liste Semestrielle des Clients générée</strong></p>
 						<p>🏢 Informations distributeur et clients</p>
 						<p>📊 Volumes en hectolitres (hL)</p>
-						<p>💰 Tarifs d'accise : 3,86€ (avec attestation) / 24,81€ (sans attestation)</p>
+						<p>📋 Distinction avec/sans attestation automatique</p>
 					`;
 					}
 
@@ -465,7 +463,7 @@ function afficher_resume(frm) {
 	if (frm.doc.type_periode === "Trimestriel") {
 		doc_type = "📊 Génère: Déclaration Trimestrielle (Comptabilité Matière - GNR)";
 	} else if (frm.doc.type_periode === "Semestriel") {
-		doc_type = "👥 Génère: Liste Semestrielle des Clients Douane (avec tarifs d'accise)";
+		doc_type = "👥 Génère: Liste Semestrielle des Clients Douane";
 	} else if (frm.doc.type_periode === "Annuel") {
 		doc_type = "📋 Génère: Déclaration + Liste Clients (formats exacts Excel)";
 	}
@@ -474,10 +472,10 @@ function afficher_resume(frm) {
 		frm.dashboard.add_comment(doc_type, "blue", true);
 	}
 
-	// Ajout d'informations sur les tarifs GNR
+	// Ajout d'informations sur les attestations
 	if (frm.doc.type_periode === "Semestriel" || frm.doc.type_periode === "Annuel") {
 		frm.dashboard.add_comment(
-			"💰 Tarifs: 3,86€/hL (N° Dossier + Date Dépôt remplis) - 24,81€/hL (champs manquants)",
+			"📋 Distinction automatique: Avec attestation (N° Dossier + Date Dépôt remplis) / Sans attestation",
 			"orange",
 			true
 		);
@@ -526,12 +524,8 @@ function verifier_donnees_disponibles(frm) {
 					<div class="col-sm-6">
 						<h6>⚖️ Répartition Attestations</h6>
 						<ul>
-							<li><strong>🟢 Avec attestation :</strong> ${
-								data.volume_avec_attestation || 0
-							}L (tarif 3,86€/hL)</li>
-							<li><strong>🔴 Sans attestation :</strong> ${
-								data.volume_sans_attestation || 0
-							}L (tarif 24,81€/hL)</li>
+							<li><strong>🟢 Avec attestation :</strong> ${data.volume_avec_attestation || 0}L</li>
+							<li><strong>🔴 Sans attestation :</strong> ${data.volume_sans_attestation || 0}L</li>
 						</ul>
 					</div>
 					<div class="col-sm-6">

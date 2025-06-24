@@ -200,27 +200,55 @@ class DeclarationPeriodeGNR(Document):
                 
             elif self.type_periode == "Semestriel":
                 # Générer la Liste Semestrielle des Clients au format exact
-                if not self.inclure_details_clients:
-                    frappe.throw("La liste des clients est obligatoire pour les déclarations semestrielles")
-                
                 return generer_liste_semestrielle_exacte(self.date_debut, self.date_fin)
                 
             elif self.type_periode == "Annuel":
-                # Pour l'annuel, on peut générer les deux
-                arrete = generer_declaration_trimestrielle_exacte(self.date_debut, self.date_fin)
-                liste_clients = generer_liste_semestrielle_exacte(self.date_debut, self.date_fin)
-                
-                if arrete.get("success") and liste_clients.get("success"):
-                    return {
-                        "success": True,
-                        "arrete_url": arrete["file_url"],
-                        "clients_url": liste_clients["file_url"],
-                        "message": "Deux fichiers générés : Déclaration annuelle et Liste clients"
-                    }
-                else:
+                # Pour l'annuel, on génère les deux types de documents
+                try:
+                    # Générer la déclaration trimestrielle pour l'année
+                    arrete = generer_declaration_trimestrielle_exacte(self.date_debut, self.date_fin)
+                    
+                    # Générer la liste clients pour l'année
+                    liste_clients = generer_liste_semestrielle_exacte(self.date_debut, self.date_fin)
+                    
+                    # Vérifier si au moins un des deux a réussi
+                    if arrete and arrete.get("success"):
+                        if liste_clients and liste_clients.get("success"):
+                            # Les deux ont réussi
+                            return {
+                                "success": True,
+                                "arrete_url": arrete["file_url"],
+                                "clients_url": liste_clients["file_url"],
+                                "message": "Déclaration annuelle et liste clients générées"
+                            }
+                        else:
+                            # Seule la déclaration a réussi
+                            return {
+                                "success": True,
+                                "file_url": arrete["file_url"],
+                                "file_name": arrete["file_name"],
+                                "message": "Déclaration annuelle générée (liste clients échouée)"
+                            }
+                    elif liste_clients and liste_clients.get("success"):
+                        # Seule la liste clients a réussi
+                        return {
+                            "success": True,
+                            "file_url": liste_clients["file_url"],
+                            "file_name": liste_clients["file_name"],
+                            "message": "Liste clients annuelle générée (déclaration échouée)"
+                        }
+                    else:
+                        # Les deux ont échoué
+                        return {
+                            "success": False,
+                            "message": "Échec de la génération des exports annuels"
+                        }
+                        
+                except Exception as e:
+                    frappe.log_error(f"Erreur export annuel: {str(e)}")
                     return {
                         "success": False,
-                        "message": "Erreur lors de la génération des exports annuels"
+                        "message": f"Erreur lors de la génération annuelle: {str(e)}"
                     }
             
             else:
