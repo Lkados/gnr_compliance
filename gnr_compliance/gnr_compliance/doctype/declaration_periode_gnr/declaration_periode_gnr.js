@@ -10,7 +10,17 @@ frappe.ui.form.on("Declaration Periode GNR", {
 		}
 
 		if (frm.doc.docstatus === 1) {
-			frm.add_custom_button("📄 Export Excel", function () {
+			// Texte du bouton selon le type de période
+			let button_text = "📄 Export";
+			if (frm.doc.type_periode === "Trimestriel") {
+				button_text = "📊 Arrêté Trimestriel";
+			} else if (frm.doc.type_periode === "Semestriel") {
+				button_text = "👥 Liste Clients";
+			} else if (frm.doc.type_periode === "Annuel") {
+				button_text = "📋 Export Annuel";
+			}
+
+			frm.add_custom_button(button_text, function () {
 				export_excel(frm);
 			}).addClass("btn-success");
 		}
@@ -38,22 +48,29 @@ frappe.ui.form.on("Declaration Periode GNR", {
 
 function mettre_a_jour_periodes(frm) {
 	let options = [];
+	let description = "";
 
 	if (frm.doc.type_periode === "Trimestriel") {
 		options = ["T1", "T2", "T3", "T4"];
+		description = "T1 (Jan-Mar), T2 (Avr-Juin), T3 (Juil-Sep), T4 (Oct-Déc)";
 	} else if (frm.doc.type_periode === "Semestriel") {
 		options = ["S1", "S2"];
+		description = "S1 (Jan-Juin), S2 (Juil-Déc)";
 	} else if (frm.doc.type_periode === "Annuel") {
 		options = ["ANNEE"];
+		description = "Année complète";
 	}
 
 	// Mettre à jour les options du champ période
 	frm.set_df_property("periode", "options", options.join("\n"));
+	frm.set_df_property("periode", "description", description);
 
 	// Reset la période si elle n'est plus valide
 	if (!options.includes(frm.doc.periode)) {
-		frm.set_value("periode", "");
+		frm.set_value("periode", options[0]); // Sélectionner la première option par défaut
 	}
+
+	frm.refresh_field("periode");
 }
 
 function calculer_dates(frm) {
@@ -115,14 +132,51 @@ function generer_declaration(frm) {
 }
 
 function export_excel(frm) {
-	frappe.show_progress("Export...", 70, "Génération du fichier Excel");
+	frappe.show_progress("Export...", 70, "Génération du fichier réglementaire");
 
-	frm.call("generer_export_excel").then((r) => {
-		frappe.hide_progress();
-		if (r.message && r.message.file_url) {
-			window.open(r.message.file_url);
-		}
-	});
+	frm.call("generer_export_reglementaire")
+		.then((r) => {
+			frappe.hide_progress();
+
+			if (r.message) {
+				if (r.message.arrete_url && r.message.clients_url) {
+					// Export annuel - deux fichiers
+					frappe.msgprint({
+						title: "Export Annuel Généré",
+						message: `
+						<p>Deux fichiers ont été générés :</p>
+						<p><a href="${r.message.arrete_url}" target="_blank">📊 Arrêté Annuel de Stock</a></p>
+						<p><a href="${r.message.clients_url}" target="_blank">👥 Liste Annuelle des Clients</a></p>
+					`,
+						indicator: "green",
+					});
+				} else if (r.message.file_url) {
+					// Export simple
+					let type_doc = "";
+					if (frm.doc.type_periode === "Trimestriel") {
+						type_doc = "📊 Arrêté Trimestriel de Stock Détaillé";
+					} else if (frm.doc.type_periode === "Semestriel") {
+						type_doc = "👥 Liste Semestrielle des Clients Douane";
+					}
+
+					frappe.show_alert({
+						message: `${type_doc} généré avec succès`,
+						indicator: "green",
+					});
+
+					// Ouvrir le fichier
+					window.open(r.message.file_url);
+				}
+			}
+		})
+		.catch((error) => {
+			frappe.hide_progress();
+			frappe.msgprint({
+				title: "Erreur Export",
+				message: "Erreur lors de la génération de l'export réglementaire",
+				indicator: "red",
+			});
+		});
 }
 
 function afficher_resume(frm) {
@@ -137,5 +191,19 @@ function afficher_resume(frm) {
 
 	if (frm.doc.nb_clients) {
 		frm.dashboard.add_indicator(`Clients: ${frm.doc.nb_clients}`, "orange");
+	}
+
+	// Indicateur du type de document généré
+	let doc_type = "";
+	if (frm.doc.type_periode === "Trimestriel") {
+		doc_type = "📊 Génère: Arrêté Trimestriel de Stock Détaillé";
+	} else if (frm.doc.type_periode === "Semestriel") {
+		doc_type = "👥 Génère: Liste Semestrielle des Clients Douane";
+	} else if (frm.doc.type_periode === "Annuel") {
+		doc_type = "📋 Génère: Arrêté + Liste Clients";
+	}
+
+	if (doc_type) {
+		frm.dashboard.add_comment(doc_type, "blue", true);
 	}
 }
