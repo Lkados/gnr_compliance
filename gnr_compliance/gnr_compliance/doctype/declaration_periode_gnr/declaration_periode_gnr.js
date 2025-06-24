@@ -7,6 +7,11 @@ frappe.ui.form.on("Declaration Periode GNR", {
 			frm.add_custom_button("📊 Générer", function () {
 				generer_declaration(frm);
 			}).addClass("btn-primary");
+
+			// Bouton debug pour vérifier les données disponibles
+			frm.add_custom_button("🔍 Vérifier Données", function () {
+				verifier_donnees_disponibles(frm);
+			}).addClass("btn-secondary");
 		}
 
 		if (frm.doc.docstatus === 1) {
@@ -121,14 +126,38 @@ function generer_declaration(frm) {
 
 	frappe.show_progress("Génération...", 50, "Calcul des données GNR");
 
-	// Sauvegarder pour déclencher les calculs
-	frm.save().then(() => {
-		frappe.hide_progress();
-		frappe.show_alert({
-			message: "Déclaration générée avec succès",
-			indicator: "green",
+	// Appeler directement la méthode de calcul côté serveur
+	frm.call("calculer_donnees_forcees")
+		.then((r) => {
+			frappe.hide_progress();
+
+			if (r.message && r.message.success) {
+				// Recharger le document pour voir les nouvelles données
+				frm.reload_doc();
+
+				frappe.show_alert({
+					message: r.message.message || "Déclaration générée avec succès",
+					indicator: "green",
+				});
+			} else {
+				frappe.msgprint({
+					title: "Génération terminée",
+					message: r.message
+						? r.message.message
+						: "Aucune donnée trouvée pour cette période",
+					indicator: "orange",
+				});
+			}
+		})
+		.catch((error) => {
+			frappe.hide_progress();
+			frappe.msgprint({
+				title: "Erreur",
+				message: "Erreur lors du calcul des données",
+				indicator: "red",
+			});
+			console.error("Erreur génération:", error);
 		});
-	});
 }
 
 function export_excel(frm) {
@@ -206,4 +235,58 @@ function afficher_resume(frm) {
 	if (doc_type) {
 		frm.dashboard.add_comment(doc_type, "blue", true);
 	}
+}
+
+function verifier_donnees_disponibles(frm) {
+	if (!frm.doc.date_debut || !frm.doc.date_fin) {
+		frappe.msgprint("Veuillez d'abord sélectionner une période valide");
+		return;
+	}
+
+	frappe.show_progress("Vérification...", 30, "Analyse des données disponibles");
+
+	frm.call("diagnostiquer_donnees").then((r) => {
+		frappe.hide_progress();
+
+		if (r.message) {
+			let data = r.message;
+
+			let message = `
+				<h5>🔍 Diagnostic des données GNR</h5>
+				<p><strong>Période :</strong> ${frm.doc.date_debut} au ${frm.doc.date_fin}</p>
+				
+				<div class="row">
+					<div class="col-sm-6">
+						<h6>📊 Mouvements GNR</h6>
+						<ul>
+							<li><strong>Total :</strong> ${data.total_mouvements}</li>
+							<li><strong>Ventes :</strong> ${data.ventes}</li>
+							<li><strong>Achats :</strong> ${data.achats}</li>
+							<li><strong>Autres :</strong> ${data.autres}</li>
+						</ul>
+					</div>
+					<div class="col-sm-6">
+						<h6>💰 Totaux calculés</h6>
+						<ul>
+							<li><strong>Quantité totale :</strong> ${data.quantite_totale}L</li>
+							<li><strong>Taxe GNR :</strong> ${data.taxe_totale}€</li>
+							<li><strong>Clients uniques :</strong> ${data.clients_uniques}</li>
+						</ul>
+					</div>
+				</div>
+				
+				${
+					data.total_mouvements === 0
+						? '<div class="alert alert-warning">⚠️ Aucun mouvement GNR trouvé pour cette période</div>'
+						: '<div class="alert alert-success">✅ Données disponibles pour génération</div>'
+				}
+			`;
+
+			frappe.msgprint({
+				title: "Diagnostic des Données",
+				message: message,
+				indicator: data.total_mouvements > 0 ? "green" : "orange",
+			});
+		}
+	});
 }

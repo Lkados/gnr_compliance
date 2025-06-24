@@ -3,9 +3,11 @@
 
 import frappe
 from frappe.utils import getdate, flt
-import xlsxwriter
+from frappe.utils.xlutils import make_ods
 from io import BytesIO
 from datetime import datetime
+import openpyxl
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
 
 @frappe.whitelist()
 def generer_arrete_trimestriel(from_date, to_date, include_details=True):
@@ -24,67 +26,55 @@ def generer_arrete_trimestriel(from_date, to_date, include_details=True):
         # Récupérer les données des mouvements GNR
         mouvements = get_mouvements_gnr_periode(from_date, to_date)
         
-        # Créer le fichier Excel
-        output = BytesIO()
-        workbook = xlsxwriter.Workbook(output, {'in_memory': True})
+        # Créer un nouveau classeur Excel
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Arrêté Stock Détaillé"
         
-        # === FORMATS DE CELLULES ===
-        header_format = workbook.add_format({
-            'bold': True,
-            'bg_color': '#D9E1F2',
-            'border': 1,
-            'align': 'center',
-            'valign': 'vcenter'
-        })
+        # === STYLES ===
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+        header_alignment = Alignment(horizontal="center", vertical="center")
         
-        data_format = workbook.add_format({
-            'border': 1,
-            'align': 'right',
-            'num_format': '#,##0.000'
-        })
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
         
-        text_format = workbook.add_format({
-            'border': 1,
-            'align': 'left'
-        })
-        
-        currency_format = workbook.add_format({
-            'border': 1,
-            'align': 'right',
-            'num_format': '#,##0.00 €'
-        })
-        
-        # === FEUILLE PRINCIPALE ===
-        worksheet = workbook.add_worksheet('Arrêté Stock Détaillé')
-        
-        # En-tête du document
+        # === EN-TÊTE ===
         periode_text = f"{datetime.strptime(from_date, '%Y-%m-%d').strftime('%B %Y')} à {datetime.strptime(to_date, '%Y-%m-%d').strftime('%B %Y')}"
         
-        worksheet.merge_range('A1:H1', f'ARRÊTÉ TRIMESTRIEL DE STOCK DÉTAILLÉ - {periode_text}', header_format)
-        worksheet.merge_range('A2:H2', 'Conformément à l\'arrêté du 28 juin 2001', header_format)
+        # Fusionner et écrire le titre
+        ws.merge_cells('A1:H1')
+        ws['A1'] = f'ARRÊTÉ TRIMESTRIEL DE STOCK DÉTAILLÉ - {periode_text}'
+        ws['A1'].font = header_font
+        ws['A1'].fill = header_fill
+        ws['A1'].alignment = header_alignment
         
-        # En-têtes colonnes (ligne 4)
+        ws.merge_cells('A2:H2')
+        ws['A2'] = 'Conformément à l\'arrêté du 28 juin 2001'
+        ws['A2'].font = header_font
+        ws['A2'].fill = header_fill
+        ws['A2'].alignment = header_alignment
+        
+        # === EN-TÊTES COLONNES ===
         headers = [
-            'Code Produit',
-            'Désignation',
-            'Stock Début (hL)',
-            'Entrées (hL)', 
-            'Sorties (hL)',
-            'Stock Fin (hL)',
-            'Taux GNR (€/hL)',
-            'Montant Taxe (€)'
+            'Code Produit', 'Désignation', 'Stock Début (hL)',
+            'Entrées (hL)', 'Sorties (hL)', 'Stock Fin (hL)',
+            'Taux GNR (€/hL)', 'Montant Taxe (€)'
         ]
         
-        for col, header in enumerate(headers):
-            worksheet.write(3, col, header, header_format)
-            
-        # Largeurs des colonnes
-        column_widths = [15, 30, 15, 15, 15, 15, 15, 18]
-        for i, width in enumerate(column_widths):
-            worksheet.set_column(i, i, width)
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=4, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+            cell.border = border
         
         # === DONNÉES ===
-        row = 4
+        row = 5
         total_taxe = 0
         
         # Grouper par produit
@@ -97,7 +87,6 @@ def generer_arrete_trimestriel(from_date, to_date, include_details=True):
                     'stock_debut': 0,
                     'entrees': 0,
                     'sorties': 0,
-                    'stock_fin': 0,
                     'taux_gnr': mouvement.taux_gnr or 0,
                     'montant_taxe': 0
                 }
@@ -111,30 +100,38 @@ def generer_arrete_trimestriel(from_date, to_date, include_details=True):
         
         # Écrire les données
         for code_produit, data in produits_data.items():
-            # Calculer stock fin = stock début + entrées - sorties
             data['stock_fin'] = data['stock_debut'] + data['entrees'] - data['sorties']
             
-            worksheet.write(row, 0, code_produit, text_format)
-            worksheet.write(row, 1, data['designation'], text_format)
-            worksheet.write(row, 2, data['stock_debut'], data_format)
-            worksheet.write(row, 3, data['entrees'], data_format)
-            worksheet.write(row, 4, data['sorties'], data_format)
-            worksheet.write(row, 5, data['stock_fin'], data_format)
-            worksheet.write(row, 6, data['taux_gnr'], currency_format)
-            worksheet.write(row, 7, data['montant_taxe'], currency_format)
+            ws.cell(row=row, column=1, value=code_produit).border = border
+            ws.cell(row=row, column=2, value=data['designation']).border = border
+            ws.cell(row=row, column=3, value=data['stock_debut']).border = border
+            ws.cell(row=row, column=4, value=data['entrees']).border = border
+            ws.cell(row=row, column=5, value=data['sorties']).border = border
+            ws.cell(row=row, column=6, value=data['stock_fin']).border = border
+            ws.cell(row=row, column=7, value=data['taux_gnr']).border = border
+            ws.cell(row=row, column=8, value=data['montant_taxe']).border = border
             
             total_taxe += data['montant_taxe']
             row += 1
         
         # Total final
-        worksheet.merge_range(row + 1, 0, row + 1, 6, 'TOTAL TAXE GNR', header_format)
-        worksheet.write(row + 1, 7, total_taxe, currency_format)
+        ws.merge_cells(f'A{row+2}:G{row+2}')
+        total_cell = ws[f'A{row+2}']
+        total_cell.value = 'TOTAL TAXE GNR'
+        total_cell.font = header_font
+        total_cell.fill = header_fill
+        total_cell.alignment = header_alignment
         
-        # Signature et date
-        worksheet.write(row + 4, 5, 'Date et signature:', text_format)
-        worksheet.write(row + 5, 5, datetime.now().strftime('%d/%m/%Y'), text_format)
+        ws.cell(row=row+2, column=8, value=total_taxe).border = border
         
-        workbook.close()
+        # Ajuster les largeurs de colonnes
+        column_widths = [15, 30, 15, 15, 15, 15, 15, 18]
+        for i, width in enumerate(column_widths, 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
+        
+        # Sauvegarder dans un buffer
+        output = BytesIO()
+        wb.save(output)
         output.seek(0)
         
         # Créer le fichier
@@ -169,75 +166,65 @@ def generer_liste_semestrielle_clients(from_date, to_date):
         # Récupérer les données clients avec ventes GNR
         clients_data = get_clients_gnr_periode(from_date, to_date)
         
-        # Créer le fichier Excel
-        output = BytesIO()
-        workbook = xlsxwriter.Workbook(output, {'in_memory': True})
+        # Créer un nouveau classeur Excel
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Liste Clients Semestrielle"
         
-        # === FORMATS ===
-        header_format = workbook.add_format({
-            'bold': True,
-            'bg_color': '#D9E1F2',
-            'border': 1,
-            'align': 'center',
-            'valign': 'vcenter'
-        })
+        # === STYLES ===
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
+        header_alignment = Alignment(horizontal="center", vertical="center")
         
-        data_format = workbook.add_format({
-            'border': 1,
-            'align': 'right',
-            'num_format': '#,##0.000'
-        })
+        border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
         
-        text_format = workbook.add_format({
-            'border': 1,
-            'align': 'left'
-        })
-        
-        currency_format = workbook.add_format({
-            'border': 1,
-            'align': 'right',
-            'num_format': '#,##0.00 €'
-        })
-        
-        # === FEUILLE CLIENTS ===
-        worksheet = workbook.add_worksheet('Liste Clients Semestrielle')
-        
-        # En-tête
+        # === EN-TÊTE ===
         periode_text = f"{datetime.strptime(from_date, '%Y-%m-%d').strftime('%B %Y')} à {datetime.strptime(to_date, '%Y-%m-%d').strftime('%B %Y')}"
-        worksheet.merge_range('A1:F1', f'LISTE SEMESTRIELLE DES CLIENTS - {periode_text}', header_format)
-        worksheet.merge_range('A2:F2', 'Déclaration pour la Direction Générale des Douanes et Droits Indirects', header_format)
         
-        # En-têtes colonnes
+        # Fusionner et écrire le titre
+        ws.merge_cells('A1:F1')
+        ws['A1'] = f'LISTE SEMESTRIELLE DES CLIENTS - {periode_text}'
+        ws['A1'].font = header_font
+        ws['A1'].fill = header_fill
+        ws['A1'].alignment = header_alignment
+        
+        ws.merge_cells('A2:F2')
+        ws['A2'] = 'Déclaration pour la Direction Générale des Douanes et Droits Indirects'
+        ws['A2'].font = header_font
+        ws['A2'].fill = header_fill
+        ws['A2'].alignment = header_alignment
+        
+        # === EN-TÊTES COLONNES ===
         headers = [
-            'Code Client',
-            'Nom/Raison Sociale',
-            'SIRET',
-            'Quantité Totale (hL)',
-            'Montant HT (€)',
-            'Montant Taxe GNR (€)'
+            'Code Client', 'Nom/Raison Sociale', 'SIRET',
+            'Quantité Totale (hL)', 'Montant HT (€)', 'Montant Taxe GNR (€)'
         ]
         
-        for col, header in enumerate(headers):
-            worksheet.write(3, col, header, header_format)
-        
-        # Largeurs colonnes
-        column_widths = [15, 35, 20, 18, 18, 18]
-        for i, width in enumerate(column_widths):
-            worksheet.set_column(i, i, width)
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=4, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+            cell.border = border
         
         # === DONNÉES CLIENTS ===
-        row = 4
+        row = 5
         total_quantite = 0
         total_ht = 0
         total_taxe = 0
         
         for client in clients_data:
-            worksheet.write(row, 0, client['code_client'], text_format)
-            worksheet.write(row, 1, client['nom_client'], text_format)
-            worksheet.write(row, 2, client['siret'] or '', text_format)
-            worksheet.write(row, 3, client['quantite_totale'], data_format)
-            worksheet.write(row, 4, client['montant_ht'], currency_format)
-            worksheet.write(row, 5, client['montant_taxe'], currency_format)
+            ws.cell(row=row, column=1, value=client['code_client']).border = border
+            ws.cell(row=row, column=2, value=client['nom_client']).border = border
+            ws.cell(row=row, column=3, value=client['siret'] or '').border = border
+            ws.cell(row=row, column=4, value=client['quantite_totale']).border = border
+            ws.cell(row=row, column=5, value=client['montant_ht']).border = border
+            ws.cell(row=row, column=6, value=client['montant_taxe']).border = border
             
             total_quantite += client['quantite_totale']
             total_ht += client['montant_ht']
@@ -245,16 +232,29 @@ def generer_liste_semestrielle_clients(from_date, to_date):
             row += 1
         
         # Totaux
-        worksheet.merge_range(row + 1, 0, row + 1, 2, 'TOTAUX', header_format)
-        worksheet.write(row + 1, 3, total_quantite, data_format)
-        worksheet.write(row + 1, 4, total_ht, currency_format)
-        worksheet.write(row + 1, 5, total_taxe, currency_format)
+        ws.merge_cells(f'A{row+2}:C{row+2}')
+        total_cell = ws[f'A{row+2}']
+        total_cell.value = 'TOTAUX'
+        total_cell.font = header_font
+        total_cell.fill = header_fill
+        total_cell.alignment = header_alignment
+        
+        ws.cell(row=row+2, column=4, value=total_quantite).border = border
+        ws.cell(row=row+2, column=5, value=total_ht).border = border
+        ws.cell(row=row+2, column=6, value=total_taxe).border = border
+        
+        # Ajuster les largeurs de colonnes
+        column_widths = [15, 35, 20, 18, 18, 18]
+        for i, width in enumerate(column_widths, 1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
         
         # Informations légales
-        worksheet.write(row + 4, 0, 'Déclaration établie conformément au décret n°2001-387 du 3 mai 2001', text_format)
-        worksheet.write(row + 5, 0, f'Date d\'établissement: {datetime.now().strftime("%d/%m/%Y")}', text_format)
+        ws.cell(row=row+5, column=1, value='Déclaration établie conformément au décret n°2001-387 du 3 mai 2001')
+        ws.cell(row=row+6, column=1, value=f'Date d\'établissement: {datetime.now().strftime("%d/%m/%Y")}')
         
-        workbook.close()
+        # Sauvegarder dans un buffer
+        output = BytesIO()
+        wb.save(output)
         output.seek(0)
         
         # Créer le fichier
