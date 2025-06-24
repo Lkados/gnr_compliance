@@ -33,7 +33,8 @@ doc_events = {
 doctype_js = {
     "Sales Invoice": "public/js/sales_invoice_gnr.js",
     "Purchase Invoice": "public/js/purchase_invoice_gnr.js", 
-    "Stock Entry": "public/js/stock_entry_gnr.js"
+    "Stock Entry": "public/js/stock_entry_gnr.js",
+    "Customer": "public/js/customer_attestation.js"
 }
 
 # === Champs personnalisés unifiés ===
