@@ -7,6 +7,79 @@
   "track_changes": 1,
   "fields": [
     {
+      "fieldname": "total_entrees",
+      "fieldtype": "Float",
+      "label": "Total Entrées (L)",
+      "precision": "3",
+      "read_only": 1,
+      "insert_after": "total_ventes"
+    },
+    {
+      "fieldname": "total_sorties",
+      "fieldtype": "Float",
+      "label": "Total Sorties (L)",
+      "precision": "3",
+      "read_only": 1,
+      "insert_after": "total_entrees"
+    },
+    {
+      "fieldname": "ca_reel",
+      "fieldtype": "Currency",
+      "label": "CA Réel (€)",
+      "read_only": 1,
+      "insert_after": "total_taxe_gnr"
+    },
+    {
+      "fieldname": "taux_moyen_reel",
+      "fieldtype": "Float",
+      "label": "Taux Moyen Réel (€/L)",
+      "precision": "4",
+      "read_only": 1,
+      "insert_after": "ca_reel"
+    },
+    {
+      "fieldname": "section_attestations",
+      "fieldtype": "Section Break",
+      "label": "Répartition Attestations",
+      "collapsible": 1,
+      "insert_after": "taux_moyen_reel"
+    },
+    {
+      "fieldname": "volume_avec_attestation",
+      "fieldtype": "Float",
+      "label": "Volume Avec Attestation (L)",
+      "precision": "3",
+      "read_only": 1,
+      "insert_after": "section_attestations"
+    },
+    {
+      "fieldname": "volume_sans_attestation",
+      "fieldtype": "Float",
+      "label": "Volume Sans Attestation (L)",
+      "precision": "3",
+      "read_only": 1,
+      "insert_after": "volume_avec_attestation"
+    },
+    {
+      "fieldname": "column_break_attestations",
+      "fieldtype": "Column Break",
+      "insert_after": "volume_sans_attestation"
+    },
+    {
+      "fieldname": "taxe_avec_attestation",
+      "fieldtype": "Currency",
+      "label": "Taxe Avec Attestation (€)",
+      "read_only": 1,
+      "insert_after": "column_break_attestations"
+    },
+    {
+      "fieldname": "taxe_sans_attestation",
+      "fieldtype": "Currency",
+      "label": "Taxe Sans Attestation (€)",
+      "read_only": 1,
+      "insert_after": "taxe_avec_attestation"
+    },
+    {
       "fieldname": "section_periode",
       "fieldtype": "Section Break",
       "label": "Période"
