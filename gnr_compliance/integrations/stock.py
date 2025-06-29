@@ -264,7 +264,7 @@ def reprocess_stock_entries(from_date=None, to_date=None):
     Retraite les Stock Entry pour capturer les mouvements GNR manqués
     """
     try:
-        # Construction de la requête SQL CORRIGÉE
+        # Construction de la requête SQL pour chercher les articles MARQUÉS GNR
         conditions = ["se.docstatus = 1"]
         values = []
         
@@ -276,47 +276,40 @@ def reprocess_stock_entries(from_date=None, to_date=None):
             conditions.append("se.posting_date <= %s")
             values.append(to_date)
         
-        # Ajouter les conditions pour les patterns APRÈS les dates
-        pattern_conditions = """
-        AND (
-            sed.item_code LIKE %s
-            OR sed.item_code LIKE %s
-            OR sed.item_code LIKE %s
-            OR sed.item_code LIKE %s
-            OR sed.item_code LIKE %s
-            OR sed.item_code LIKE %s
-        )
-        """
-        
-        # Ajouter les valeurs des patterns
-        patterns = ['%GNR%', '%GAZOLE%', '%GAZOIL%', '%FIOUL%', '%FUEL%', '%ADBLUE%']
-        values.extend(patterns)
-        
         where_clause = " AND ".join(conditions)
         
-        # Requête CORRIGÉE
+        # Requête CORRIGÉE - cherche les articles marqués is_gnr_tracked = 1
         query = f"""
-            SELECT DISTINCT se.name, se.stock_entry_type, se.posting_date
+            SELECT DISTINCT 
+                se.name, 
+                se.stock_entry_type, 
+                se.posting_date,
+                COUNT(sed.name) as nb_items_gnr
             FROM `tabStock Entry` se
             INNER JOIN `tabStock Entry Detail` sed ON se.name = sed.parent
+            INNER JOIN `tabItem` i ON sed.item_code = i.name
             WHERE {where_clause}
+            AND i.is_gnr_tracked = 1
             AND NOT EXISTS (
                 SELECT 1 FROM `tabMouvement GNR` m 
                 WHERE m.reference_document = 'Stock Entry' 
                 AND m.reference_name = se.name
                 AND m.docstatus = 1
             )
-            {pattern_conditions}
+            GROUP BY se.name
             ORDER BY se.posting_date DESC
             LIMIT 100
         """
         
         stock_entries = frappe.db.sql(query, values, as_dict=True)
         
+        frappe.logger().info(f"[GNR] Trouvé {len(stock_entries)} Stock Entry à traiter")
+        
         processed = 0
         errors = []
         for entry in stock_entries:
             try:
+                frappe.logger().info(f"[GNR] Traitement de {entry.name} avec {entry.nb_items_gnr} articles GNR")
                 doc = frappe.get_doc("Stock Entry", entry.name)
                 capture_mouvement_stock(doc, "reprocess")
                 processed += 1
@@ -336,6 +329,115 @@ def reprocess_stock_entries(from_date=None, to_date=None):
     except Exception as e:
         frappe.log_error(f"Erreur retraitement Stock Entry: {str(e)}")
         return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def find_stock_entries_with_gnr(from_date=None, to_date=None):
+    """
+    Fonction pour trouver et lister les Stock Entry avec articles GNR
+    """
+    try:
+        conditions = ["se.docstatus = 1"]
+        values = []
+        
+        if from_date:
+            conditions.append("se.posting_date >= %s")
+            values.append(from_date)
+        
+        if to_date:
+            conditions.append("se.posting_date <= %s")
+            values.append(to_date)
+        
+        where_clause = " AND ".join(conditions)
+        
+        # Chercher TOUS les Stock Entry avec articles GNR
+        query = f"""
+            SELECT 
+                se.name,
+                se.stock_entry_type,
+                se.posting_date,
+                GROUP_CONCAT(DISTINCT sed.item_code) as items_gnr,
+                COUNT(DISTINCT sed.item_code) as nb_items,
+                SUM(sed.qty) as total_qty,
+                EXISTS(
+                    SELECT 1 FROM `tabMouvement GNR` m 
+                    WHERE m.reference_document = 'Stock Entry' 
+                    AND m.reference_name = se.name
+                    AND m.docstatus = 1
+                ) as has_gnr_movement
+            FROM `tabStock Entry` se
+            INNER JOIN `tabStock Entry Detail` sed ON se.name = sed.parent
+            INNER JOIN `tabItem` i ON sed.item_code = i.name
+            WHERE {where_clause}
+            AND i.is_gnr_tracked = 1
+            GROUP BY se.name
+            ORDER BY se.posting_date DESC
+            LIMIT 20
+        """
+        
+        entries = frappe.db.sql(query, values, as_dict=True)
+        
+        print(f"\n📋 Stock Entry avec articles GNR trouvés: {len(entries)}")
+        for entry in entries:
+            status = "✅ Traité" if entry.has_gnr_movement else "❌ Non traité"
+            print(f"\n  - {entry.name} ({entry.posting_date})")
+            print(f"    Type: {entry.stock_entry_type}")
+            print(f"    Articles GNR: {entry.items_gnr}")
+            print(f"    Quantité totale: {entry.total_qty}")
+            print(f"    Statut: {status}")
+        
+        return entries
+        
+    except Exception as e:
+        frappe.log_error(f"Erreur recherche Stock Entry GNR: {str(e)}")
+        return []
+
+@frappe.whitelist()
+def debug_stock_entry(stock_entry_name):
+    """
+    Debug détaillé d'un Stock Entry spécifique
+    """
+    try:
+        se = frappe.get_doc("Stock Entry", stock_entry_name)
+        
+        print(f"\n🔍 Debug Stock Entry: {stock_entry_name}")
+        print(f"  Type: {se.stock_entry_type}")
+        print(f"  Date: {se.posting_date}")
+        print(f"  Statut: {se.docstatus}")
+        
+        print(f"\n  📦 Articles:")
+        gnr_count = 0
+        for item in se.items:
+            is_gnr = frappe.get_value("Item", item.item_code, "is_gnr_tracked")
+            item_group = frappe.get_value("Item", item.item_code, "item_group")
+            
+            if is_gnr:
+                gnr_count += 1
+                print(f"    ✅ {item.item_code} - Qty: {item.qty} - Groupe: {item_group}")
+            else:
+                print(f"    ❌ {item.item_code} - Qty: {item.qty} - Groupe: {item_group}")
+        
+        # Vérifier les mouvements GNR existants
+        existing = frappe.get_all("Mouvement GNR", 
+                                 filters={
+                                     "reference_document": "Stock Entry",
+                                     "reference_name": stock_entry_name
+                                 },
+                                 fields=["name", "docstatus", "code_produit", "quantite"])
+        
+        print(f"\n  📊 Mouvements GNR existants: {len(existing)}")
+        for mov in existing:
+            status = "Soumis" if mov.docstatus == 1 else "Brouillon"
+            print(f"    - {mov.name}: {mov.code_produit} - {mov.quantite} [{status}]")
+        
+        return {
+            'name': stock_entry_name,
+            'gnr_items': gnr_count,
+            'existing_movements': len(existing)
+        }
+        
+    except Exception as e:
+        print(f"❌ Erreur: {str(e)}")
+        return {'error': str(e)}
     
 @frappe.whitelist()
 def test_stock_capture(stock_entry_name):
