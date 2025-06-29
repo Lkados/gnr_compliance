@@ -262,6 +262,7 @@ def reprocess_stock_entries(from_date=None, to_date=None):
     Retraite les Stock Entry pour capturer les mouvements GNR manqués
     """
     try:
+        # Construction de la requête SQL CORRIGÉE
         conditions = ["se.docstatus = 1"]
         values = []
         
@@ -273,10 +274,26 @@ def reprocess_stock_entries(from_date=None, to_date=None):
             conditions.append("se.posting_date <= %s")
             values.append(to_date)
         
+        # Ajouter les conditions pour les patterns APRÈS les dates
+        pattern_conditions = """
+        AND (
+            sed.item_code LIKE %s
+            OR sed.item_code LIKE %s
+            OR sed.item_code LIKE %s
+            OR sed.item_code LIKE %s
+            OR sed.item_code LIKE %s
+            OR sed.item_code LIKE %s
+        )
+        """
+        
+        # Ajouter les valeurs des patterns
+        patterns = ['%GNR%', '%GAZOLE%', '%GAZOIL%', '%FIOUL%', '%FUEL%', '%ADBLUE%']
+        values.extend(patterns)
+        
         where_clause = " AND ".join(conditions)
         
-        # Trouver les Stock Entry avec des articles GNR potentiels
-        stock_entries = frappe.db.sql(f"""
+        # Requête CORRIGÉE
+        query = f"""
             SELECT DISTINCT se.name, se.stock_entry_type, se.posting_date
             FROM `tabStock Entry` se
             INNER JOIN `tabStock Entry Detail` sed ON se.name = sed.parent
@@ -287,38 +304,37 @@ def reprocess_stock_entries(from_date=None, to_date=None):
                 AND m.reference_name = se.name
                 AND m.docstatus = 1
             )
-            AND (
-                sed.item_code LIKE '%GNR%'
-                OR sed.item_code LIKE '%GAZOLE%'
-                OR sed.item_code LIKE '%GAZOIL%'
-                OR sed.item_code LIKE '%FIOUL%'
-                OR sed.item_code LIKE '%FUEL%'
-                OR sed.item_code LIKE '%ADBLUE%'
-            )
+            {pattern_conditions}
             ORDER BY se.posting_date DESC
             LIMIT 100
-        """, values, as_dict=True)
+        """
+        
+        stock_entries = frappe.db.sql(query, values, as_dict=True)
         
         processed = 0
+        errors = []
         for entry in stock_entries:
             try:
                 doc = frappe.get_doc("Stock Entry", entry.name)
                 capture_mouvement_stock(doc, "reprocess")
                 processed += 1
             except Exception as e:
-                frappe.logger().error(f"[GNR] Erreur retraitement {entry.name}: {str(e)}")
+                error_msg = f"Erreur {entry.name}: {str(e)}"
+                frappe.logger().error(f"[GNR] {error_msg}")
+                errors.append(error_msg)
         
         return {
             'success': True,
             'message': f"{processed} Stock Entry retraités sur {len(stock_entries)} trouvés",
             'processed': processed,
-            'found': len(stock_entries)
+            'found': len(stock_entries),
+            'errors': errors if errors else None
         }
         
     except Exception as e:
         frappe.log_error(f"Erreur retraitement Stock Entry: {str(e)}")
         return {'success': False, 'error': str(e)}
-
+    
 @frappe.whitelist()
 def test_stock_capture(stock_entry_name):
     """
