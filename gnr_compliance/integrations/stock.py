@@ -79,59 +79,61 @@ def capture_mouvement_stock(doc, method):
 
 def check_if_gnr_item(item_code):
     """
-    Vérifie si un article est un produit GNR - MÉTHODE AMÉLIORÉE
+    Vérifie si un article est un produit GNR en se basant sur le groupe d'article
     """
     try:
+        # Liste des groupes GNR valides
+        GNR_ITEM_GROUPS = [
+            "Combustibles/Carburants/GNR",
+            "Combustibles/Carburants/Gazole", 
+            "Combustibles/Adblue",
+            "Combustibles/Fioul/Bio",
+            "Combustibles/Fioul/Hiver",
+            "Combustibles/Fioul/Standard"
+        ]
+        
         # Méthode 1 : Vérifier le champ is_gnr_tracked
         is_tracked = frappe.get_value("Item", item_code, "is_gnr_tracked")
         if is_tracked:
             return True
         
-        # Méthode 2 : Vérifier par patterns (si le champ n'existe pas)
-        item_doc = frappe.get_doc("Item", item_code)
+        # Méthode 2 : Vérifier le groupe d'article
+        item_group = frappe.get_value("Item", item_code, "item_group")
         
-        # Vérifier le code article
-        code_lower = item_code.lower()
-        gnr_keywords = ['gnr', 'gazole', 'gazoil', 'fioul', 'fuel', 'adblue', 'ad blue']
-        for keyword in gnr_keywords:
-            if keyword in code_lower:
-                # Marquer automatiquement comme GNR
-                try:
-                    frappe.db.set_value("Item", item_code, {
-                        "is_gnr_tracked": 1,
-                        "gnr_tracked_category": keyword.upper()
-                    })
-                except:
-                    pass
-                return True
-        
-        # Vérifier le nom de l'article
-        if item_doc.item_name:
-            name_lower = item_doc.item_name.lower()
-            for keyword in gnr_keywords:
-                if keyword in name_lower:
-                    try:
-                        frappe.db.set_value("Item", item_code, {
-                            "is_gnr_tracked": 1,
-                            "gnr_tracked_category": keyword.upper()
-                        })
-                    except:
-                        pass
-                    return True
-        
-        # Vérifier le groupe d'articles
-        if item_doc.item_group:
-            group_lower = item_doc.item_group.lower()
-            group_keywords = ['combustible', 'carburant', 'fuel', 'énergie']
-            for keyword in group_keywords:
-                if keyword in group_lower:
-                    return True
+        if item_group in GNR_ITEM_GROUPS:
+            # Marquer automatiquement comme GNR
+            category, tax_rate = get_category_and_rate_from_group(item_group)
+            
+            try:
+                frappe.db.set_value("Item", item_code, {
+                    "is_gnr_tracked": 1,
+                    "gnr_tracked_category": category,
+                    "gnr_tax_rate": tax_rate
+                })
+                frappe.logger().info(f"[GNR] Article {item_code} marqué automatiquement comme GNR (groupe: {item_group})")
+            except:
+                pass
+                
+            return True
         
         return False
         
     except Exception as e:
         frappe.logger().error(f"[GNR] Erreur vérification article {item_code}: {str(e)}")
         return False
+
+def get_category_and_rate_from_group(item_group):
+    """Retourne la catégorie et le taux selon le groupe"""
+    mapping = {
+        "Combustibles/Carburants/GNR": ("GNR", 24.81),
+        "Combustibles/Carburants/Gazole": ("GAZOLE", 24.81),
+        "Combustibles/Adblue": ("ADBLUE", 0),
+        "Combustibles/Fioul/Bio": ("FIOUL_BIO", 3.86),
+        "Combustibles/Fioul/Hiver": ("FIOUL_HIVER", 3.86),
+        "Combustibles/Fioul/Standard": ("FIOUL_STANDARD", 3.86)
+    }
+    
+    return mapping.get(item_group, ("GNR", 24.81))
 
 def create_gnr_movement_from_stock(stock_doc, item):
     """
