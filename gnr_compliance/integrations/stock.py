@@ -142,7 +142,20 @@ def create_gnr_movement_from_stock(stock_doc, item):
     AVEC CONVERSION EN LITRES
     """
     try:
-        # ... (début du code identique)
+        # Déterminer le type de mouvement
+        type_mouvement = determine_movement_type(stock_doc.stock_entry_type, item)
+        
+        if not type_mouvement:
+            return False
+        
+        # Récupérer les informations de l'article
+        item_doc = frappe.get_doc("Item", item.item_code)
+        
+        # Date de posting
+        posting_date = getdate(stock_doc.posting_date)
+        
+        # Taux GNR de l'article
+        taux_gnr = getattr(item_doc, 'gnr_tax_rate', 0) or 0
         
         # NOUVEAU : Récupérer l'unité de mesure
         item_unit = item.uom or get_item_unit(item.item_code)
@@ -173,6 +186,76 @@ def create_gnr_movement_from_stock(stock_doc, item):
         
         # Calculer le montant de taxe GNR (en litres)
         mouvement_gnr.montant_taxe_gnr = flt(mouvement_gnr.quantite * mouvement_gnr.taux_gnr)
+        
+        # Sauvegarder
+        mouvement_gnr.insert(ignore_permissions=True)
+        
+        try:
+            mouvement_gnr.submit()
+            frappe.logger().info(f"[GNR] Mouvement stock créé et soumis: {mouvement_gnr.name}")
+            return True
+        except Exception as submit_error:
+            frappe.log_error(f"Erreur soumission mouvement stock {mouvement_gnr.name}: {str(submit_error)}")
+            return True  # Compter comme créé même si pas soumis
+            
+    except Exception as e:
+        frappe.log_error(f"Erreur création mouvement GNR depuis stock: {str(e)}")
+        return False
+
+def determine_movement_type(stock_entry_type, item):
+    """Détermine le type de mouvement GNR selon le type de Stock Entry"""
+    
+    # Mapping des types de Stock Entry vers types de mouvement GNR
+    type_mapping = {
+        "Material Receipt": "Entrée",
+        "Material Issue": "Sortie", 
+        "Material Transfer": "Transfert",
+        "Manufacture": "Production",
+        "Repack": "Production",
+        "Send to Subcontractor": "Sortie",
+        "Material Transfer for Manufacture": "Transfert"
+    }
+    
+    # Déterminer selon les entrepôts source/cible
+    if item.s_warehouse and item.t_warehouse:
+        return "Transfert"
+    elif item.t_warehouse and not item.s_warehouse:
+        return "Entrée"
+    elif item.s_warehouse and not item.t_warehouse:
+        return "Sortie"
+    
+    # Utiliser le mapping par défaut
+    return type_mapping.get(stock_entry_type, "Stock")
+
+def cancel_mouvement_stock(doc, method):
+    """Annule les mouvements GNR lors de l'annulation d'un Stock Entry"""
+    try:
+        # Trouver les mouvements GNR liés
+        movements = frappe.get_all("Mouvement GNR",
+                                  filters={
+                                      "reference_document": "Stock Entry",
+                                      "reference_name": doc.name,
+                                      "docstatus": ["!=", 2]  # Pas déjà annulés
+                                  })
+        
+        movements_cancelled = 0
+        for movement in movements:
+            mov_doc = frappe.get_doc("Mouvement GNR", movement.name)
+            if mov_doc.docstatus == 1:  # Si soumis, annuler
+                mov_doc.cancel()
+            else:  # Si brouillon, supprimer
+                mov_doc.delete()
+            movements_cancelled += 1
+        
+        if movements_cancelled > 0:
+            frappe.msgprint(
+                f"✅ {movements_cancelled} mouvement(s) GNR annulé(s)",
+                title="GNR Compliance",
+                indicator="orange"
+            )
+            
+    except Exception as e:
+        frappe.log_error(f"Erreur annulation GNR pour Stock Entry {doc.name}: {str(e)}")
 
 @frappe.whitelist()
 def reprocess_stock_entries(from_date=None, to_date=None):
