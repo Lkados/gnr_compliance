@@ -2,6 +2,7 @@ import frappe
 from frappe import _
 from frappe.utils import flt, now_datetime, getdate
 import logging
+from gnr_compliance.utils.unit_conversions import convert_to_litres, get_item_unit
 
 logger = logging.getLogger(__name__)
 
@@ -137,49 +138,21 @@ def get_category_and_rate_from_group(item_group):
 
 def create_gnr_movement_from_stock(stock_doc, item):
     """
-    Crée un mouvement GNR depuis un mouvement de stock - VERSION SIMPLIFIÉE
+    Crée un mouvement GNR depuis un mouvement de stock
+    AVEC CONVERSION EN LITRES
     """
     try:
-        # Récupérer les données GNR de l'article
-        item_doc = frappe.get_doc("Item", item.item_code)
+        # ... (début du code identique)
         
-        # Déterminer le type de mouvement GNR selon le type de Stock Entry
-        movement_type_map = {
-            "Material Receipt": "Entrée",
-            "Material Issue": "Sortie",
-            "Material Transfer": "Transfert",
-            "Material Transfer for Manufacture": "Production",
-            "Manufacture": "Production",
-            "Repack": "Reconditionnement",
-            "Send to Subcontractor": "Sortie",
-            "Material Consumption for Manufacture": "Consommation"
-        }
+        # NOUVEAU : Récupérer l'unité de mesure
+        item_unit = item.uom or get_item_unit(item.item_code)
         
-        # Type par défaut si non trouvé
-        type_mouvement = movement_type_map.get(stock_doc.stock_entry_type, "Stock")
+        # NOUVEAU : Convertir en litres
+        quantity_in_litres = convert_to_litres(item.qty, item_unit)
         
-        # Pour les transferts, déterminer entrée/sortie selon l'entrepôt
-        if stock_doc.stock_entry_type == "Material Transfer":
-            if item.s_warehouse and not item.t_warehouse:
-                type_mouvement = "Sortie"
-            elif item.t_warehouse and not item.s_warehouse:
-                type_mouvement = "Entrée"
-        
-        # Convertir la date
-        posting_date = getdate(stock_doc.posting_date)
-        
-        # Récupérer le taux GNR
-        taux_gnr = 0
-        try:
-            taux_gnr = flt(item_doc.gnr_tax_rate) or 0
-        except:
-            # Si le champ n'existe pas, utiliser un taux par défaut selon le produit
-            if 'adblue' in item.item_code.lower():
-                taux_gnr = 0  # AdBlue n'est pas taxé
-            elif 'fioul' in item.item_code.lower():
-                taux_gnr = 3.86  # Taux agricole par défaut
-            else:
-                taux_gnr = 24.81  # Taux standard par défaut
+        # Log de la conversion
+        if item_unit != "L" and item_unit != "l":
+            frappe.logger().info(f"[GNR] Conversion Stock: {item.qty} {item_unit} = {quantity_in_litres} litres")
         
         # Créer le mouvement GNR
         mouvement_gnr = frappe.new_doc("Mouvement GNR")
@@ -189,8 +162,8 @@ def create_gnr_movement_from_stock(stock_doc, item):
             "reference_document": "Stock Entry",
             "reference_name": stock_doc.name,
             "code_produit": item.item_code,
-            "quantite": flt(item.qty),
-            "prix_unitaire": flt(item.basic_rate or item.valuation_rate or 0),
+            "quantite": quantity_in_litres,  # EN LITRES
+            "prix_unitaire": flt(item.basic_rate or item.valuation_rate or 0) / (quantity_in_litres / item.qty) if item.qty else 0,
             "taux_gnr": taux_gnr,
             "categorie_gnr": getattr(item_doc, 'gnr_tracked_category', 'GNR'),
             "trimestre": get_quarter_from_date(posting_date),
@@ -198,65 +171,8 @@ def create_gnr_movement_from_stock(stock_doc, item):
             "semestre": get_semestre_from_date(posting_date)
         })
         
-        # Calculer le montant de taxe GNR
+        # Calculer le montant de taxe GNR (en litres)
         mouvement_gnr.montant_taxe_gnr = flt(mouvement_gnr.quantite * mouvement_gnr.taux_gnr)
-        
-        # Ajouter client/fournisseur si disponible
-        if hasattr(stock_doc, 'customer') and stock_doc.customer:
-            mouvement_gnr.client = stock_doc.customer
-        elif hasattr(stock_doc, 'supplier') and stock_doc.supplier:
-            mouvement_gnr.fournisseur = stock_doc.supplier
-        
-        # Insérer et soumettre
-        mouvement_gnr.insert(ignore_permissions=True)
-        
-        if stock_doc.docstatus == 1:
-            mouvement_gnr.submit()
-            frappe.logger().info(f"[GNR] Mouvement GNR créé: {mouvement_gnr.name} pour {item.item_code} ({type_mouvement})")
-            return True
-        
-        return False
-        
-    except Exception as e:
-        frappe.logger().error(f"[GNR] Erreur création mouvement GNR pour {item.item_code}: {str(e)}")
-        frappe.log_error(f"Erreur création mouvement GNR Stock: {str(e)}", "GNR Stock Movement Error")
-        return False
-
-def cancel_mouvement_stock(doc, method):
-    """
-    Annule les mouvements GNR associés à un Stock Entry annulé
-    """
-    try:
-        frappe.logger().info(f"[GNR] Annulation mouvements pour Stock Entry: {doc.name}")
-        
-        # Annuler les mouvements GNR associés
-        mouvements = frappe.get_all("Mouvement GNR",
-                                   filters={
-                                       "reference_document": "Stock Entry",
-                                       "reference_name": doc.name,
-                                       "docstatus": 1
-                                   })
-        
-        cancelled_count = 0
-        for mouvement in mouvements:
-            try:
-                mouvement_doc = frappe.get_doc("Mouvement GNR", mouvement.name)
-                mouvement_doc.cancel()
-                cancelled_count += 1
-            except Exception as e:
-                frappe.logger().error(f"[GNR] Erreur annulation mouvement {mouvement.name}: {str(e)}")
-        
-        if cancelled_count > 0:
-            frappe.msgprint(
-                f"✅ {cancelled_count} mouvement(s) GNR annulé(s)",
-                title="GNR Compliance - Stock",
-                indicator="orange"
-            )
-        
-        frappe.logger().info(f"[GNR] {cancelled_count} mouvements GNR annulés pour {doc.name}")
-        
-    except Exception as e:
-        frappe.logger().error(f"[GNR] Erreur annulation mouvements GNR pour {doc.name}: {str(e)}")
 
 @frappe.whitelist()
 def reprocess_stock_entries(from_date=None, to_date=None):

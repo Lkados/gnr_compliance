@@ -290,8 +290,8 @@ def generer_liste_semestrielle_exacte(from_date, to_date):
             ws.cell(row=row, column=4, value=siren_client).border = thin_border
             
             # Volume en hL (conversion de L vers hL)
-            quantite_l = client.get('quantite_totale', 0)
-            volume_hl = quantite_l / 100 if quantite_l else 0
+            quantite_l = client.get('quantite_totale', 0)  # Déjà en litres
+            volume_hl = quantite_l / 100  # Conversion litres vers hectolitres
             ws.cell(row=row, column=5, value=volume_hl).border = thin_border
             ws.cell(row=row, column=5).number_format = '#,##0.00'
             
