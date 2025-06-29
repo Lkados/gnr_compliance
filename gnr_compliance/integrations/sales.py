@@ -1,6 +1,66 @@
+# gnr_compliance/integrations/sales.py
 import frappe
 from frappe import _
 from frappe.utils import getdate
+
+# Groupes d'articles GNR valides
+GNR_ITEM_GROUPS = [
+    "Combustibles/Carburants/GNR",
+    "Combustibles/Carburants/Gazole", 
+    "Combustibles/Adblue",
+    "Combustibles/Fioul/Bio",
+    "Combustibles/Fioul/Hiver",
+    "Combustibles/Fioul/Standard"
+]
+
+def check_if_gnr_item_for_sales(item_code):
+    """
+    Vérifie si un article est GNR basé sur le groupe d'article
+    Uniforme avec la détection des Stock Entry
+    """
+    try:
+        # Méthode 1 : Vérifier le champ is_gnr_tracked
+        is_tracked = frappe.get_value("Item", item_code, "is_gnr_tracked")
+        if is_tracked:
+            return True
+        
+        # Méthode 2 : Vérifier le groupe d'article
+        item_group = frappe.get_value("Item", item_code, "item_group")
+        
+        if item_group in GNR_ITEM_GROUPS:
+            # Marquer automatiquement comme GNR
+            category, tax_rate = get_category_and_rate_from_group(item_group)
+            
+            try:
+                frappe.db.set_value("Item", item_code, {
+                    "is_gnr_tracked": 1,
+                    "gnr_tracked_category": category,
+                    "gnr_tax_rate": tax_rate
+                })
+                frappe.logger().info(f"[GNR] Article {item_code} marqué automatiquement comme GNR (groupe: {item_group})")
+            except:
+                pass
+                
+            return True
+        
+        return False
+        
+    except Exception as e:
+        frappe.logger().error(f"[GNR] Erreur vérification article {item_code}: {str(e)}")
+        return False
+
+def get_category_and_rate_from_group(item_group):
+    """Retourne la catégorie et le taux selon le groupe"""
+    mapping = {
+        "Combustibles/Carburants/GNR": ("GNR", 24.81),
+        "Combustibles/Carburants/Gazole": ("GAZOLE", 24.81),
+        "Combustibles/Adblue": ("ADBLUE", 0),
+        "Combustibles/Fioul/Bio": ("FIOUL_BIO", 3.86),
+        "Combustibles/Fioul/Hiver": ("FIOUL_HIVER", 3.86),
+        "Combustibles/Fioul/Standard": ("FIOUL_STANDARD", 3.86)
+    }
+    
+    return mapping.get(item_group, ("GNR", 24.81))
 
 def capture_vente_gnr(doc, method):
     """
@@ -92,13 +152,12 @@ def capture_vente_gnr(doc, method):
                 frappe.logger().info(f"Taux GNR trouvé dans historique pour {item.item_code}: {taux_historique}€/L")
                 return taux_historique
             
-            # 5. Essayer de déduire depuis le prix si aucune taxe explicite
-            # Logique métier : si le prix semble inclure la taxe, essayer de la déduire
-            if item.rate > 1:  # Prix unitaire > 1€
-                # Cette logique dépend de votre structure de prix
-                # Exemple : si vous savez que 10% du prix = taxe GNR
-                # return item.rate * 0.10
-                pass
+            # 5. Utiliser le taux par défaut selon le groupe
+            item_group = frappe.get_value("Item", item.item_code, "item_group")
+            if item_group in GNR_ITEM_GROUPS:
+                category, default_rate = get_category_and_rate_from_group(item_group)
+                frappe.logger().info(f"Taux GNR par défaut pour groupe {item_group}: {default_rate}€/L")
+                return default_rate
             
             # Si vraiment rien trouvé, logging d'erreur mais pas de valeur par défaut
             frappe.log_error(f"Aucun taux GNR trouvé pour {item.item_code} dans facture {doc.name}", 
@@ -113,9 +172,12 @@ def capture_vente_gnr(doc, method):
         movements_created = 0
         posting_date = getdate(doc.posting_date)  # Convertir une seule fois
         
+        # Log pour debug
+        frappe.logger().info(f"[GNR] Capture vente: {doc.name}, Date: {posting_date}")
+        
         for item in doc.items:
-            # Vérifier si l'article est tracké GNR
-            is_gnr = frappe.get_value("Item", item.item_code, "is_gnr_tracked")
+            # Vérifier si l'article est tracké GNR - UTILISE LA NOUVELLE FONCTION
+            is_gnr = check_if_gnr_item_for_sales(item.item_code)
             
             if is_gnr:
                 # Vérifier si mouvement déjà créé
@@ -250,6 +312,12 @@ def capture_achat_gnr(doc, method):
             if dernier_taux and dernier_taux[0][0]:
                 return dernier_taux[0][0]
             
+            # 4. Taux par défaut selon le groupe
+            item_group = frappe.get_value("Item", item.item_code, "item_group")
+            if item_group in GNR_ITEM_GROUPS:
+                category, default_rate = get_category_and_rate_from_group(item_group)
+                return default_rate
+            
             return 0.0
             
         except Exception as e:
@@ -261,8 +329,8 @@ def capture_achat_gnr(doc, method):
         posting_date = getdate(doc.posting_date)  # Convertir une seule fois
         
         for item in doc.items:
-            # Vérifier si l'article est tracké GNR
-            is_gnr = frappe.get_value("Item", item.item_code, "is_gnr_tracked")
+            # Vérifier si l'article est tracké GNR - UTILISE LA NOUVELLE FONCTION
+            is_gnr = check_if_gnr_item_for_sales(item.item_code)  # Même fonction que pour les ventes
             
             if is_gnr:
                 # Vérifier si mouvement déjà créé

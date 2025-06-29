@@ -1,3 +1,4 @@
+# gnr_compliance/patches/add_missing_movement_types.py
 import frappe
 import json
 
@@ -33,13 +34,42 @@ def execute():
         # Mettre à jour le cache
         frappe.clear_cache(doctype="Mouvement GNR")
         
+        return True
+        
     except Exception as e:
         print(f"❌ Erreur : {str(e)}")
         frappe.log_error(f"Erreur ajout types mouvement: {str(e)}")
+        return False
 
 # Pour exécuter manuellement
 @frappe.whitelist()
 def run_patch():
     """Exécute le patch manuellement"""
-    execute()
-    return {'success': True, 'message': 'Types de mouvement ajoutés'}
+    success = execute()
+    if success:
+        return {'success': True, 'message': 'Types de mouvement ajoutés avec succès'}
+    else:
+        return {'success': False, 'message': 'Erreur lors de l\'ajout des types'}
+
+@frappe.whitelist()
+def check_current_options():
+    """Vérifie les options actuelles du champ type_mouvement"""
+    try:
+        field = frappe.get_meta("Mouvement GNR").get_field("type_mouvement")
+        if field:
+            options = field.options.split("\n") if field.options else []
+            return {
+                'success': True,
+                'current_options': options,
+                'count': len(options)
+            }
+        else:
+            return {
+                'success': False,
+                'message': 'Champ type_mouvement non trouvé'
+            }
+    except Exception as e:
+        return {
+            'success': False,
+            'error': str(e)
+        }
