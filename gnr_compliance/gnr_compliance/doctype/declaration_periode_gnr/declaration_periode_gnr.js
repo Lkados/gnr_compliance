@@ -1,5 +1,3 @@
-// gnr_compliance/gnr_compliance/doctype/declaration_periode_gnr/declaration_periode_gnr.js
-
 frappe.ui.form.on("Declaration Periode GNR", {
 	refresh: function (frm) {
 		// Ajouter boutons d'action simples
@@ -17,11 +15,11 @@ frappe.ui.form.on("Declaration Periode GNR", {
 				__("Diagnostic")
 			).addClass("btn-secondary");
 
-			// Bouton pour vérifier les attestations clients
+			// Bouton pour vérifier les attestations clients AVEC EXPIRATION
 			frm.add_custom_button(
-				"📋 Attestations Clients",
+				"📋 Attestations & Expiration",
 				function () {
-					verifier_attestations_clients(frm);
+					verifier_attestations_avec_expiration(frm);
 				},
 				__("Diagnostic")
 			).addClass("btn-info");
@@ -64,6 +62,104 @@ frappe.ui.form.on("Declaration Periode GNR", {
 	},
 });
 
+function verifier_attestations_avec_expiration(frm) {
+	frappe.show_progress("Vérification...", 50, "Analyse des attestations et expirations");
+
+	frappe.call({
+		method: "gnr_compliance.utils.verification_attestations.verifier_attestations_clients",
+		callback: function (r) {
+			frappe.hide_progress();
+
+			if (r.message && r.message.success) {
+				let data = r.message;
+
+				let message = `
+					<h5>📋 État des Attestations Clients avec Expiration</h5>
+					
+					<div class="row">
+						<div class="col-sm-6">
+							<h6>📊 Résumé</h6>
+							<ul>
+								<li><strong>Total clients :</strong> ${data.total_clients}</li>
+								<li><strong>🟢 Attestations valides :</strong> ${data.avec_attestation}</li>
+								<li><strong>🟠 Bientôt expirer :</strong> ${data.bientot_expirer}</li>
+								<li><strong>🔴 Expirées :</strong> ${data.expires}</li>
+								<li><strong>❌ Sans attestation :</strong> ${data.sans_attestation}</li>
+								<li><strong>⚠️ Incomplets :</strong> ${data.incomplets}</li>
+							</ul>
+						</div>
+						<div class="col-sm-6">
+							<h6>ℹ️ Information Tarifs</h6>
+							<p><strong>🟢 Attestation valide :</strong> Tarif d'accise réduit (3,86€/hL)</p>
+							<p><strong>🟠 Bientôt expirer :</strong> Encore valide mais à renouveler</p>
+							<p><strong>🔴 Expirée :</strong> Tarif normal (24,81€/hL)</p>
+							<p><strong>❌ Sans attestation :</strong> Tarif normal (24,81€/hL)</p>
+						</div>
+					</div>
+				`;
+
+				// Alertes spécifiques
+				if (data.expires > 0) {
+					message += `
+						<div class="alert alert-danger">
+							<strong>⚠️ ${data.expires} client(s) avec attestation PÉRIMÉE</strong><br>
+							Ces clients sont facturés au tarif normal automatiquement.
+						</div>
+					`;
+				}
+
+				if (data.bientot_expirer > 0) {
+					message += `
+						<div class="alert alert-warning">
+							<strong>⏰ ${data.bientot_expirer} client(s) avec attestation qui expire bientôt</strong><br>
+							Prévenir ces clients pour renouveler leur attestation.
+						</div>
+					`;
+				}
+
+				if (data.avec_attestation > 0) {
+					message += `
+						<div class="alert alert-success">
+							✅ ${data.avec_attestation} client(s) avec attestation valide (tarif réduit)
+						</div>
+					`;
+				}
+
+				// Afficher détails clients à renouveler si nécessaire
+				if (
+					data.details.clients_bientot_expirer &&
+					data.details.clients_bientot_expirer.length > 0
+				) {
+					message += `<h6>🟠 Clients à renouveler prochainement :</h6><ul>`;
+					data.details.clients_bientot_expirer.slice(0, 5).forEach(function (client) {
+						message += `<li><strong>${client.nom}</strong> - Expire le ${client.date_expiration} (${client.jours_restants} jours)</li>`;
+					});
+					if (data.details.clients_bientot_expirer.length > 5) {
+						message += `<li>... et ${
+							data.details.clients_bientot_expirer.length - 5
+						} autres</li>`;
+					}
+					message += `</ul>`;
+				}
+
+				frappe.msgprint({
+					title: "Vérification Attestations & Expiration",
+					message: message,
+					indicator:
+						data.expires > 0 ? "red" : data.bientot_expirer > 0 ? "orange" : "green",
+				});
+			} else {
+				frappe.msgprint({
+					title: "Erreur",
+					message: r.message ? r.message.message : "Erreur lors de la vérification",
+					indicator: "red",
+				});
+			}
+		},
+	});
+}
+
+// Fonctions existantes (gardées identiques)
 function mettre_a_jour_periodes(frm) {
 	let options = [];
 	let description = "";
@@ -79,13 +175,11 @@ function mettre_a_jour_periodes(frm) {
 		description = "Année complète";
 	}
 
-	// Mettre à jour les options du champ période
 	frm.set_df_property("periode", "options", options.join("\n"));
 	frm.set_df_property("periode", "description", description);
 
-	// Reset la période si elle n'est plus valide
 	if (!options.includes(frm.doc.periode)) {
-		frm.set_value("periode", options[0]); // Sélectionner la première option par défaut
+		frm.set_value("periode", options[0]);
 	}
 
 	frm.refresh_field("periode");
@@ -137,19 +231,22 @@ function generer_declaration(frm) {
 		return;
 	}
 
-	frappe.show_progress("Génération...", 50, "Calcul des données GNR");
+	frappe.show_progress(
+		"Génération...",
+		50,
+		"Calcul des données GNR avec vérification expiration"
+	);
 
-	// Appeler directement la méthode de calcul côté serveur
 	frm.call("calculer_donnees_forcees")
 		.then((r) => {
 			frappe.hide_progress();
 
 			if (r.message && r.message.success) {
-				// Recharger le document pour voir les nouvelles données
 				frm.reload_doc();
 
 				frappe.show_alert({
-					message: r.message.message || "Déclaration générée avec succès",
+					message:
+						r.message.message || "Déclaration générée avec vérification expiration",
 					indicator: "green",
 				});
 			} else {
@@ -173,163 +270,6 @@ function generer_declaration(frm) {
 		});
 }
 
-function verifier_attestations_clients(frm) {
-	frappe.show_progress("Vérification...", 50, "Analyse des attestations clients");
-
-	frappe.call({
-		method: "gnr_compliance.utils.verification_attestations.verifier_attestations_clients",
-		callback: function (r) {
-			frappe.hide_progress();
-
-			if (r.message && r.message.success) {
-				let data = r.message;
-
-				let message = `
-					<h5>📋 État des Attestations Clients</h5>
-					
-					<div class="row">
-						<div class="col-sm-4">
-							<h6>📊 Résumé</h6>
-							<ul>
-								<li><strong>Total clients :</strong> ${data.total_clients}</li>
-								<li><strong>🟢 Avec attestation :</strong> ${data.avec_attestation}</li>
-								<li><strong>🔴 Sans attestation :</strong> ${data.sans_attestation}</li>
-								<li><strong>⚠️ Incomplets :</strong> ${data.incomplets}</li>
-							</ul>
-						</div>
-						<div class="col-sm-8">
-							<h6>📋 Information Attestations</h6>
-							<p><strong>🟢 Clients avec attestation :</strong> N° Dossier + Date de Dépôt remplis</p>
-							<p><strong>🔴 Clients sans attestation :</strong> N° Dossier OU Date de Dépôt manquant</p>
-						</div>
-					</div>
-					
-					${
-						data.incomplets > 0
-							? `<div class="alert alert-warning">
-							<strong>⚠️ ${data.incomplets} client(s) avec dossier incomplet</strong><br>
-							Vérifiez que les champs "N° Dossier" ET "Date de Dépôt" sont bien remplis.
-						</div>`
-							: ""
-					}
-					
-					${
-						data.avec_attestation > 0
-							? `<div class="alert alert-success">
-							✅ ${data.avec_attestation} client(s) avec attestation agricole/forestière
-						</div>`
-							: ""
-					}
-				`;
-
-				frappe.msgprint({
-					title: "Vérification Attestations",
-					message: message,
-					indicator: data.incomplets > 0 ? "orange" : "green",
-				});
-			} else {
-				frappe.msgprint({
-					title: "Erreur",
-					message: r.message ? r.message.message : "Erreur lors de la vérification",
-					indicator: "red",
-				});
-			}
-		},
-	});
-}
-
-function export_format(frm, format_type) {
-	let format_label = format_type === "html" ? "HTML (impression/PDF)" : "CSV (Excel)";
-
-	frappe.show_progress("Export...", 70, `Génération du fichier ${format_label}`);
-
-	frm.call("generer_export_reglementaire", {
-		format_export: format_type,
-	})
-		.then((r) => {
-			frappe.hide_progress();
-
-			if (r.message && r.message.success) {
-				if (r.message.arrete_url && r.message.clients_url) {
-					// Export annuel - deux fichiers
-					frappe.msgprint({
-						title: "Export Annuel Généré",
-						message: `
-						<p>Deux fichiers ont été générés :</p>
-						<p><a href="${r.message.arrete_url}" target="_blank">📊 Arrêté Annuel de Stock</a></p>
-						<p><a href="${r.message.clients_url}" target="_blank">👥 Liste Annuelle des Clients</a></p>
-					`,
-						indicator: "green",
-					});
-				} else if (r.message.file_url) {
-					// Export simple
-					let type_doc = "";
-					if (frm.doc.type_periode === "Trimestriel") {
-						type_doc = "📊 Arrêté Trimestriel de Stock Détaillé";
-					} else if (frm.doc.type_periode === "Semestriel") {
-						type_doc = "👥 Liste Semestrielle des Clients Douane";
-					}
-
-					frappe.show_alert({
-						message: `${type_doc} généré avec succès (${format_label})`,
-						indicator: "green",
-					});
-
-					// Différent comportement selon le format
-					if (format_type === "html") {
-						// Pour HTML, ouvrir dans un nouvel onglet
-						window.open(r.message.file_url, "_blank");
-
-						frappe.msgprint({
-							title: "Export HTML Généré",
-							message: `
-							<p><strong>${r.message.message}</strong></p>
-							<p>Le fichier HTML s'est ouvert dans un nouvel onglet.</p>
-							<p><em>💡 Astuce: Utilisez Ctrl+P pour imprimer ou sauvegarder en PDF</em></p>
-							<p><a href="${r.message.file_url}" target="_blank" class="btn btn-info">
-								🌐 Rouvrir le fichier
-							</a></p>
-						`,
-							indicator: "blue",
-						});
-					} else {
-						// Pour CSV, afficher le lien de téléchargement
-						frappe.msgprint({
-							title: "Export CSV Généré",
-							message: `
-							<p><strong>${r.message.message}</strong></p>
-							<p><a href="${r.message.file_url}" target="_blank" class="btn btn-primary">
-								📥 Télécharger ${r.message.file_name}
-							</a></p>
-							<p><small><em>Format: CSV (compatible Excel) - Cliquez pour télécharger</em></small></p>
-						`,
-							indicator: "green",
-						});
-					}
-				}
-			} else {
-				// Gestion des erreurs
-				frappe.msgprint({
-					title: "Export Échoué",
-					message: r.message
-						? r.message.message
-						: "Erreur inconnue lors de la génération",
-					indicator: "red",
-				});
-			}
-		})
-		.catch((error) => {
-			frappe.hide_progress();
-			console.error("Erreur export:", error);
-			frappe.msgprint({
-				title: "Erreur Export",
-				message:
-					"Erreur lors de la génération de l'export réglementaire. Vérifiez qu'il y a des données pour cette période.",
-				indicator: "red",
-			});
-		});
-}
-
 function export_format_exact(frm) {
 	let doc_type = "";
 	if (frm.doc.type_periode === "Trimestriel") {
@@ -340,7 +280,7 @@ function export_format_exact(frm) {
 		doc_type = "Export Annuel (Déclaration + Liste Clients)";
 	}
 
-	frappe.show_progress("Export...", 70, `Génération ${doc_type}`);
+	frappe.show_progress("Export...", 70, `Génération ${doc_type} avec gestion expiration`);
 
 	frm.call("generer_export_reglementaire")
 		.then((r) => {
@@ -348,11 +288,10 @@ function export_format_exact(frm) {
 
 			if (r.message && r.message.success) {
 				if (r.message.arrete_url && r.message.clients_url) {
-					// Export annuel - deux fichiers
 					frappe.msgprint({
 						title: "Export Annuel Généré ✅",
 						message: `
-						<p><strong>Deux fichiers Excel ont été générés aux formats exacts :</strong></p>
+						<p><strong>Deux fichiers Excel générés avec gestion d'expiration :</strong></p>
 						<div style="margin: 15px 0;">
 							<p><a href="${r.message.arrete_url}" target="_blank" class="btn btn-primary" style="margin: 5px;">
 								📊 Déclaration Annuelle (Comptabilité Matière)
@@ -361,32 +300,25 @@ function export_format_exact(frm) {
 								👥 Liste Annuelle des Clients Douane
 							</a></p>
 						</div>
-						<p><small><em>Format Excel (.xlsx) - Conforme aux exigences réglementaires</em></small></p>
+						<p><small><em>Format Excel (.xlsx) - Avec distinction attestations valides/expirées</em></small></p>
 					`,
 						indicator: "green",
 					});
 				} else if (r.message.file_url) {
-					// Export simple
-					frappe.show_alert({
-						message: `${doc_type} généré avec succès`,
-						indicator: "green",
-					});
-
-					// Message détaillé selon le type
 					let details_message = "";
 					if (frm.doc.type_periode === "Trimestriel") {
 						details_message = `
 						<p><strong>✅ Déclaration Trimestrielle générée</strong></p>
 						<p>📋 Format : Comptabilité Matière - Gasoil Non Routier</p>
-						<p>📊 Données : Mouvements jour par jour avec stocks</p>
-						<p>⚖️ Distinction : Volumes avec/sans attestation</p>
+						<p>📊 Données : Mouvements avec distinction attestations valides/expirées</p>
+						<p>⚖️ Tarifs appliqués automatiquement selon statut attestation</p>
 					`;
 					} else if (frm.doc.type_periode === "Semestriel") {
 						details_message = `
 						<p><strong>✅ Liste Semestrielle des Clients générée</strong></p>
 						<p>🏢 Informations distributeur et clients</p>
 						<p>📊 Volumes en hectolitres (hL)</p>
-						<p>📋 Distinction avec/sans attestation automatique</p>
+						<p>📋 Distinction automatique : valides/expirées/sans attestation</p>
 					`;
 					}
 
@@ -399,13 +331,12 @@ function export_format_exact(frm) {
 								📥 Télécharger ${r.message.file_name}
 							</a>
 						</div>
-						<p><small><em>Format Excel (.xlsx) - Exact selon vos spécifications</em></small></p>
+						<p><small><em>Format Excel (.xlsx) - Avec gestion automatique expiration attestations</em></small></p>
 					`,
 						indicator: "green",
 					});
 				}
 			} else {
-				// Gestion des erreurs
 				frappe.msgprint({
 					title: "Export Échoué ❌",
 					message: r.message
@@ -419,24 +350,15 @@ function export_format_exact(frm) {
 			frappe.hide_progress();
 			console.error("Erreur export:", error);
 
-			let error_details = "";
-			if (error.message && error.message.includes("openpyxl")) {
-				error_details = `
-				<p><strong>Module manquant :</strong> openpyxl</p>
-				<p>Solution : <code>bench pip install openpyxl</code></p>
-			`;
-			}
-
 			frappe.msgprint({
 				title: "Erreur Export",
 				message: `
 				<p>Erreur lors de la génération de l'export réglementaire.</p>
-				${error_details}
 				<p><strong>Vérifications :</strong></p>
 				<ul>
 					<li>Y a-t-il des mouvements GNR pour cette période ?</li>
 					<li>Le module openpyxl est-il installé ?</li>
-					<li>Les champs avec/sans attestation sont-ils remplis ?</li>
+					<li>Les attestations clients sont-elles à jour ?</li>
 				</ul>
 			`,
 				indicator: "red",
@@ -445,7 +367,6 @@ function export_format_exact(frm) {
 }
 
 function afficher_resume(frm) {
-	// Afficher un résumé visuel des données
 	if (frm.doc.total_ventes) {
 		frm.dashboard.add_indicator(`Ventes: ${format_number(frm.doc.total_ventes)} L`, "blue");
 	}
@@ -458,28 +379,24 @@ function afficher_resume(frm) {
 		frm.dashboard.add_indicator(`Clients: ${frm.doc.nb_clients}`, "orange");
 	}
 
-	// Indicateur du type de document généré
 	let doc_type = "";
 	if (frm.doc.type_periode === "Trimestriel") {
-		doc_type = "📊 Génère: Déclaration Trimestrielle (Comptabilité Matière - GNR)";
+		doc_type = "📊 Génère: Déclaration Trimestrielle (avec gestion expiration)";
 	} else if (frm.doc.type_periode === "Semestriel") {
-		doc_type = "👥 Génère: Liste Semestrielle des Clients Douane";
+		doc_type = "👥 Génère: Liste Clients (avec statut attestations)";
 	} else if (frm.doc.type_periode === "Annuel") {
-		doc_type = "📋 Génère: Déclaration + Liste Clients (formats exacts Excel)";
+		doc_type = "📋 Génère: Export Annuel (avec expiration automatique)";
 	}
 
 	if (doc_type) {
 		frm.dashboard.add_comment(doc_type, "blue", true);
 	}
 
-	// Ajout d'informations sur les attestations
-	if (frm.doc.type_periode === "Semestriel" || frm.doc.type_periode === "Annuel") {
-		frm.dashboard.add_comment(
-			"📋 Distinction automatique: Avec attestation (N° Dossier + Date Dépôt remplis) / Sans attestation",
-			"orange",
-			true
-		);
-	}
+	frm.dashboard.add_comment(
+		"🔄 Tarifs appliqués automatiquement : Valide (3,86€/hL) / Expirée ou Sans (24,81€/hL)",
+		"orange",
+		true
+	);
 }
 
 function verifier_donnees_disponibles(frm) {
@@ -488,7 +405,7 @@ function verifier_donnees_disponibles(frm) {
 		return;
 	}
 
-	frappe.show_progress("Vérification...", 30, "Analyse des données disponibles");
+	frappe.show_progress("Vérification...", 30, "Analyse des données avec expiration");
 
 	frm.call("diagnostiquer_donnees").then((r) => {
 		frappe.hide_progress();
@@ -522,16 +439,18 @@ function verifier_donnees_disponibles(frm) {
 				
 				<div class="row">
 					<div class="col-sm-6">
-						<h6>⚖️ Répartition Attestations</h6>
+						<h6>⚖️ Tarifs selon attestations</h6>
 						<ul>
-							<li><strong>🟢 Avec attestation :</strong> ${data.volume_avec_attestation || 0}L</li>
-							<li><strong>🔴 Sans attestation :</strong> ${data.volume_sans_attestation || 0}L</li>
+							<li><strong>🟢 Attestations valides :</strong> ${
+								data.volume_avec_attestation || 0
+							}L (3,86€/hL)</li>
+							<li><strong>🔴 Expirées/Sans :</strong> ${data.volume_sans_attestation || 0}L (24,81€/hL)</li>
 						</ul>
 					</div>
 					<div class="col-sm-6">
-						<h6>👥 Clients par type</h6>
+						<h6>👥 Clients par statut</h6>
 						<ul>
-							<li><strong>🟢 Agricoles/Forestiers :</strong> ${data.clients_avec_attestation || 0}</li>
+							<li><strong>🟢 Avec attestation valide :</strong> ${data.clients_avec_attestation || 0}</li>
 							<li><strong>🔴 Autres clients :</strong> ${data.clients_sans_attestation || 0}</li>
 						</ul>
 					</div>
@@ -540,15 +459,7 @@ function verifier_donnees_disponibles(frm) {
 				${
 					data.total_mouvements === 0
 						? '<div class="alert alert-warning">⚠️ Aucun mouvement GNR trouvé pour cette période</div>'
-						: '<div class="alert alert-success">✅ Données disponibles pour génération</div>'
-				}
-				
-				${
-					data.total_mouvements > 0 &&
-					!data.volume_avec_attestation &&
-					!data.volume_sans_attestation
-						? '<div class="alert alert-info">💡 Vérifiez que les champs "N° Dossier" et "Date de Dépôt" sont remplis sur les fiches clients agricoles</div>'
-						: ""
+						: '<div class="alert alert-success">✅ Données disponibles pour génération avec gestion d\'expiration</div>'
 				}
 			`;
 
