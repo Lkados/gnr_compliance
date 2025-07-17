@@ -2,12 +2,7 @@ import frappe
 
 # Groupes d'articles GNR valides
 GNR_ITEM_GROUPS = [
-    "Combustibles/Carburants/GNR",
-    "Combustibles/Carburants/Gazole", 
-    "Combustibles/Adblue",
-    "Combustibles/Fioul/Bio",
-    "Combustibles/Fioul/Hiver",
-    "Combustibles/Fioul/Standard"
+    "Combustibles/Carburants/GNR"
 ]
 
 @frappe.whitelist()
