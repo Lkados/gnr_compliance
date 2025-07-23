@@ -530,3 +530,23 @@ def get_default_rate_by_category(category):
 		"GNR": 24.81         # GNR standard
 	}
 	return rates.get(category, 24.81)
+
+def get_historical_rate_for_item(item_code):
+	"""
+	Récupère le dernier taux utilisé pour un article spécifique
+	"""
+	try:
+		result = frappe.db.sql("""
+			SELECT taux_gnr 
+			FROM `tabMouvement GNR` 
+			WHERE code_produit = %s 
+			AND taux_gnr > 0.1 AND taux_gnr < 50
+			AND docstatus = 1 
+			ORDER BY date_mouvement DESC 
+			LIMIT 1
+		""", (item_code,))
+		
+		return result[0][0] if result else None
+		
+	except Exception:
+		return None
