@@ -550,3 +550,42 @@ def get_historical_rate_for_item(item_code):
 		
 	except Exception:
 		return None
+	
+def cleanup_after_cancel(doc, method):
+    """Nettoyage final après annulation facture de vente"""
+    try:
+        # Vérifier s'il reste des mouvements non traités
+        remaining = frappe.get_all("Mouvement GNR",
+                                 filters={
+                                     "reference_document": "Sales Invoice",
+                                     "reference_name": doc.name,
+                                     "docstatus": ["!=", 2]
+                                 })
+        
+        if remaining:
+            frappe.logger().info(f"Nettoyage final: {len(remaining)} mouvements GNR restants pour facture {doc.name}")
+            
+        # Mettre à jour les statuts si nécessaire
+        update_gnr_tracking_status(doc, "cancelled")
+            
+    except Exception as e:
+        frappe.log_error(f"Erreur nettoyage final facture {doc.name}: {str(e)}")
+
+def cleanup_after_cancel_purchase(doc, method):
+    """Nettoyage final après annulation facture d'achat"""
+    try:
+        remaining = frappe.get_all("Mouvement GNR",
+                                 filters={
+                                     "reference_document": "Purchase Invoice", 
+                                     "reference_name": doc.name,
+                                     "docstatus": ["!=", 2]
+                                 })
+        
+        if remaining:
+            frappe.logger().info(f"Nettoyage final: {len(remaining)} mouvements GNR achat restants pour facture {doc.name}")
+            
+        # Mettre à jour les statuts si nécessaire
+        update_gnr_tracking_status(doc, "cancelled")
+            
+    except Exception as e:
+        frappe.log_error(f"Erreur nettoyage final facture achat {doc.name}: {str(e)}")
