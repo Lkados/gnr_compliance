@@ -515,3 +515,18 @@ def detect_gnr_category_from_item(item_code, item_name=""):
 		return "GAZOLE"
 	else:
 		return "GNR"
+	
+def get_default_rate_by_category(category):
+	"""
+	TAUX PAR DÉFAUT - utilisés seulement en dernier recours
+	Ces taux doivent être mis à jour selon la réglementation
+	"""
+	rates = {
+		"ADBLUE": 0.0,       # AdBlue non taxé
+		"FIOUL_BIO": 3.86,   # Fioul agricole
+		"FIOUL_HIVER": 3.86, 
+		"FIOUL_STANDARD": 3.86,
+		"GAZOLE": 24.81,     # Gazole routier
+		"GNR": 24.81         # GNR standard
+	}
+	return rates.get(category, 24.81)
