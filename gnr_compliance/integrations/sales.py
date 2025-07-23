@@ -1,262 +1,149 @@
+# -*- coding: utf-8 -*-
+"""
+Module de capture des ventes GNR avec prix réels depuis les factures
+Chemin: gnr_compliance/integrations/sales.py
+"""
+
 import frappe
 from frappe import _
 from frappe.utils import flt, getdate, nowdate
-from datetime import datetime, timedelta
-
-# Groupe d'articles GNR officiel
-GNR_ITEM_GROUP = "Combustibles/Carburants/GNR"
+import re
 
 
 def capture_vente_gnr(doc, method):
 	"""
-	Capture automatique des ventes GNR avec récupération du prix unitaire
+	Capture automatique des ventes GNR avec vrais taux depuis les factures
 	"""
 	try:
 		if doc.doctype != "Sales Invoice" or doc.docstatus != 1:
 			return
 
 		for item in doc.items:
-			if is_gnr_product_by_group(item.item_code):
-				# Le taux GNR = prix unitaire de l'article dans la facture
-				prix_unitaire = get_price_from_invoice_item(item)
+			if is_gnr_product(item.item_code):
+				# Récupérer le vrai taux depuis cette facture
+				taux_gnr_reel = get_real_gnr_tax_from_invoice(item, doc)
 				
-				# Créer le mouvement GNR avec le prix réel
-				create_gnr_movement_from_sale(doc, item, prix_unitaire)
+				# Créer le mouvement GNR avec le taux réel
+				create_gnr_movement_from_sale(doc, item, taux_gnr_reel)
 				
 	except Exception as e:
 		frappe.log_error(f"Erreur capture vente GNR: {str(e)}", "GNR Sales Capture")
 
 
-def capture_achat_gnr(doc, method):
+def get_real_gnr_tax_from_invoice(item, invoice_doc):
 	"""
-	Capture automatique des achats GNR avec récupération du prix unitaire
-	"""
-	try:
-		if doc.doctype != "Purchase Invoice" or doc.docstatus != 1:
-			return
-
-		for item in doc.items:
-			if is_gnr_product_by_group(item.item_code):
-				# Le taux GNR = prix unitaire de l'article dans la facture d'achat
-				prix_unitaire = get_price_from_invoice_item(item)
-				
-				# Créer le mouvement GNR avec le prix réel
-				create_gnr_movement_from_purchase(doc, item, prix_unitaire)
-				
-	except Exception as e:
-		frappe.log_error(f"Erreur capture achat GNR: {str(e)}", "GNR Purchase Capture")
-
-
-def is_gnr_product_by_group(item_code):
-	"""
-	Détermine si un article est GNR UNIQUEMENT par son groupe d'articles
-	"""
-	if not item_code:
-		return False
-	
-	try:
-		item_group = frappe.get_value("Item", item_code, "item_group")
-		is_gnr = item_group == GNR_ITEM_GROUP
-		
-		if is_gnr:
-			frappe.logger().info(f"[GNR] Article détecté: {item_code} (groupe: {item_group})")
-		else:
-			frappe.logger().debug(f"[GNR] Article ignoré: {item_code} (groupe: {item_group})")
-		
-		return is_gnr
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur vérification groupe article {item_code}: {str(e)}")
-		return False
-
-
-def get_price_from_invoice_item(item):
-	"""
-	Récupère le prix unitaire depuis un item de facture
-	PRIORITÉ: 1.Prix unitaire direct → 2.Champ personnalisé → 3.Historique → 4.ÉCHEC
+	Récupère le VRAI taux GNR depuis une facture de vente
+	PRIORITÉ: 1.Taxes facture → 2.Item rate → 3.Historique → 4.Défaut
 	"""
 	try:
-		# 1. PRIORITÉ 1: Prix unitaire direct de la facture (rate)
-		if item.rate and item.rate > 0:
-			# Convertir en prix par litre si nécessaire
-			prix_par_litre = convert_price_to_per_litre(item.rate, item.uom)
-			if is_valid_price(prix_par_litre):
-				frappe.logger().info(f"[GNR] Prix depuis facture: {prix_par_litre}€/L pour {item.item_code}")
-				return prix_par_litre
+		# 1. PRIORITÉ 1: Analyser les taxes réelles de la facture
+		if hasattr(invoice_doc, 'taxes') and invoice_doc.taxes:
+			for tax_row in invoice_doc.taxes:
+				if tax_row.description:
+					description_lower = tax_row.description.lower()
+					gnr_keywords = ['gnr', 'accise', 'ticpe', 'gazole', 'fioul', 'carburant']
+					
+					if any(keyword in description_lower for keyword in gnr_keywords):
+						if item.qty > 0 and tax_row.tax_amount:
+							# Calculer le taux par litre
+							quantity_in_litres = convert_to_litres(item.qty, item.uom)
+							
+							if quantity_in_litres > 0:
+								taux_calcule = abs(tax_row.tax_amount) / quantity_in_litres
+								if 0.1 <= taux_calcule <= 50:  # Vérification cohérence
+									frappe.logger().info(f"[GNR] Taux RÉEL trouvé: {taux_calcule}€/L depuis taxe facture")
+									return taux_calcule
+
+		# 2. PRIORITÉ 2: Taux configuré sur l'article
+		item_doc = frappe.get_doc("Item", item.item_code)
+		if hasattr(item_doc, 'gnr_tax_rate') and item_doc.gnr_tax_rate:
+			if 0.1 <= item_doc.gnr_tax_rate <= 50:
+				return item_doc.gnr_tax_rate
+
+		# 3. PRIORITÉ 3: Historique de cet article spécifique
+		historical_rate = get_historical_rate_for_item(item.item_code)
+		if historical_rate:
+			return historical_rate
+
+		# 4. DERNIER RECOURS: Analyse du nom pour détecter la catégorie
+		category = detect_gnr_category_from_item(item.item_code, item.item_name)
+		default_rate = get_default_rate_by_category(category)
 		
-		# 2. PRIORITÉ 2: Champ personnalisé prix GNR
-		if hasattr(item, 'custom_prix_gnr_par_litre') and item.custom_prix_gnr_par_litre:
-			if is_valid_price(item.custom_prix_gnr_par_litre):
-				frappe.logger().info(f"[GNR] Prix depuis champ personnalisé: {item.custom_prix_gnr_par_litre}€/L")
-				return item.custom_prix_gnr_par_litre
-		
-		# 3. PRIORITÉ 3: Historique récent des prix pour cet article
-		historical_price = get_recent_item_price(item.item_code)
-		if historical_price and is_valid_price(historical_price):
-			frappe.logger().info(f"[GNR] Prix historique utilisé: {historical_price}€/L pour {item.item_code}")
-			return historical_price
-		
-		# 4. ÉCHEC: Aucun prix trouvé
-		frappe.logger().error(f"[GNR] AUCUN PRIX trouvé pour {item.item_code} - Retour 0")
-		return 0.0
+		frappe.logger().warning(f"[GNR] Taux par défaut utilisé pour {item.item_code}: {default_rate}€/L")
+		return default_rate
 
 	except Exception as e:
-		frappe.log_error(f"Erreur récupération prix item: {str(e)}")
-		return 0.0
-
-
-def convert_price_to_per_litre(price, uom):
-	"""
-	Convertit un prix selon l'UOM vers un prix par litre
-	"""
-	if not uom or not price:
-		return price
-	
-	try:
-		uom_lower = uom.lower().strip()
-		
-		# Déjà en prix par litre
-		if any(unit in uom_lower for unit in ['litre', 'liter', 'l', 'lt']):
-			return flt(price, 3)
-		
-		# Conversions courantes vers prix par litre
-		conversion_factors = {
-			# Prix par m³ → prix par litre
-			'm3': 0.001,
-			'mètre cube': 0.001,
-			'cubic meter': 0.001,
-			
-			# Prix par hectolitre → prix par litre
-			'hectolitre': 0.01,
-			'hl': 0.01,
-			
-			# Prix par gallon → prix par litre
-			'gallon': 0.264172,
-			'gal': 0.264172,
-		}
-		
-		# Recherche directe
-		if uom_lower in conversion_factors:
-			return flt(price * conversion_factors[uom_lower], 3)
-		
-		# Recherche partielle
-		for unit, factor in conversion_factors.items():
-			if unit in uom_lower:
-				return flt(price * factor, 3)
-		
-		# Si aucune conversion, considérer comme prix par litre
-		frappe.logger().warning(f"[GNR] UOM non reconnue: {uom}, prix considéré comme €/L")
-		return flt(price, 3)
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur conversion prix UOM {uom}: {str(e)}")
-		return flt(price, 3)
-
-
-def get_recent_item_price(item_code, days=30):
-	"""
-	Récupère le prix récent moyen pour un article spécifique
-	"""
-	try:
-		date_limit = getdate(nowdate()) - timedelta(days=days)
-		
-		# Récupérer les prix récents (excluant le prix 0)
-		result = frappe.db.sql("""
-			SELECT taux_gnr as prix, date_mouvement
-			FROM `tabMouvement GNR`
-			WHERE code_produit = %s 
-			AND taux_gnr > 0.1 AND taux_gnr < 1000
-			AND docstatus = 1
-			AND date_mouvement >= %s
-			ORDER BY date_mouvement DESC
-			LIMIT 5
-		""", (item_code, date_limit), as_dict=True)
-		
-		if not result:
-			return None
-		
-		# Moyenne pondérée (plus récent = plus de poids)
-		total_weight = 0
-		weighted_sum = 0
-		
-		for i, row in enumerate(result):
-			weight = len(result) - i  # Plus récent = poids plus élevé
-			weighted_sum += row.prix * weight
-			total_weight += weight
-		
-		if total_weight > 0:
-			average_price = weighted_sum / total_weight
-			frappe.logger().info(f"[GNR] Prix historique calculé pour {item_code}: {average_price:.3f}€/L")
-			return flt(average_price, 3)
-		
-		return None
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur récupération prix historique: {str(e)}")
-		return None
-
-
-def is_valid_price(price):
-	"""
-	Vérifie si un prix GNR est valide et réaliste
-	"""
-	try:
-		price = flt(price, 3)
-		# Fourchette réaliste pour les prix GNR en France (0.10€ à 10€ par litre)
-		return 0.10 <= price <= 10.0
-	except:
-		return False
+		frappe.log_error(f"Erreur récupération taux réel: {str(e)}")
+		return get_default_rate_by_category("GNR")
 
 
 def convert_to_litres(quantity, uom):
 	"""
 	Convertit une quantité vers les litres selon l'UOM
 	"""
-	if not uom or not quantity:
+	if not uom:
 		return quantity
 	
-	try:
-		uom_lower = uom.lower().strip()
-		
-		# Déjà en litres
-		if any(unit in uom_lower for unit in ['litre', 'liter', 'l', 'lt']):
-			return flt(quantity, 3)
-		
-		# Conversions courantes
-		conversion_factors = {
-			'm3': 1000, 'mètre cube': 1000, 'cubic meter': 1000,
-			'dm3': 1, 'hectolitre': 100, 'hl': 100,
-			'gallon': 3.78541, 'gal': 3.78541,
-		}
-		
-		# Recherche directe
-		if uom_lower in conversion_factors:
-			return flt(quantity * conversion_factors[uom_lower], 3)
-		
-		# Recherche partielle
-		for unit, factor in conversion_factors.items():
-			if unit in uom_lower:
-				return flt(quantity * factor, 3)
-		
-		# Par défaut, considérer comme litres
-		return flt(quantity, 3)
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur conversion quantité UOM {uom}: {str(e)}")
-		return flt(quantity, 3)
+	uom_lower = uom.lower()
+	
+	# Déjà en litres
+	if any(unit in uom_lower for unit in ['litre', 'liter', 'l']):
+		return quantity
+	
+	# Conversions courantes
+	conversion_factors = {
+		'm3': 1000,
+		'dm3': 1,
+		'cm3': 0.001,
+		'hectolitre': 100,
+		'hl': 100,
+		'gallon': 3.78541,
+		'pint': 0.473176
+	}
+	
+	for unit, factor in conversion_factors.items():
+		if unit in uom_lower:
+			return quantity * factor
+	
+	# Par défaut, considérer comme litres
+	return quantity
 
 
-def create_gnr_movement_from_sale(invoice_doc, item, prix_unitaire):
+def is_gnr_product(item_code):
 	"""
-	Crée un mouvement GNR depuis une vente avec le prix réel
+	Détermine si un article est soumis à la taxe GNR
+	"""
+	if not item_code:
+		return False
+	
+	try:
+		item_doc = frappe.get_doc("Item", item_code)
+		
+		# Vérifier les groupes d'articles pour détecter les carburants
+		if item_doc.item_group:
+			group_lower = item_doc.item_group.lower()
+			fuel_groups = ['carburant', 'combustible', 'gazole', 'fioul', 'gnr', 'essence']
+			
+			if any(group in group_lower for group in fuel_groups):
+				return True
+		
+		# Vérifier le nom de l'article
+		item_name_lower = (item_doc.item_name or item_code).lower()
+		fuel_keywords = ['gazole', 'fioul', 'gnr', 'diesel', 'fuel', 'carburant', 'combustible']
+		
+		return any(keyword in item_name_lower for keyword in fuel_keywords)
+		
+	except Exception:
+		return False
+
+
+def create_gnr_movement_from_sale(invoice_doc, item, taux_gnr):
+	"""
+	Crée un mouvement GNR depuis une vente avec le taux réel
 	"""
 	try:
-		if prix_unitaire <= 0:
-			frappe.logger().warning(f"[GNR] Mouvement non créé pour {item.item_code} - Prix invalide: {prix_unitaire}")
-			return
-
 		quantity_litres = convert_to_litres(item.qty, item.uom)
-		montant_total = flt(quantity_litres * prix_unitaire, 2)
+		montant_taxe = flt(quantity_litres * taux_gnr, 2)
 		
 		mouvement_gnr = frappe.get_doc({
 			"doctype": "Mouvement GNR",
@@ -268,268 +155,21 @@ def create_gnr_movement_from_sale(invoice_doc, item, prix_unitaire):
 			"nom_produit": item.item_name,
 			"quantite": quantity_litres,
 			"unite": "Litre",
-			"taux_gnr": prix_unitaire,  # Le "taux" = prix unitaire
-			"montant_taxe_gnr": montant_total,  # Montant total = quantité × prix
-			"prix_unitaire": prix_unitaire,
-			"client": invoice_doc.customer,
-			"notes": f"Mouvement automatique depuis facture {invoice_doc.name} - Prix: {prix_unitaire}€/L"
+			"taux_gnr": taux_gnr,
+			"montant_taxe_gnr": montant_taxe,
+			"client_fournisseur": invoice_doc.customer,
+			"statut": "Validé",
+			"notes": f"Mouvement automatique depuis facture {invoice_doc.name}"
 		})
 		
 		mouvement_gnr.insert()
 		mouvement_gnr.submit()
 		
-		frappe.logger().info(f"[GNR] Mouvement créé: {mouvement_gnr.name} - Prix RÉEL: {prix_unitaire}€/L")
+		frappe.logger().info(f"[GNR] Mouvement créé: {mouvement_gnr.name} - Taux: {taux_gnr}€/L")
 		
 	except Exception as e:
 		frappe.log_error(f"Erreur création mouvement GNR vente: {str(e)}")
 
-
-def create_gnr_movement_from_purchase(invoice_doc, item, prix_unitaire):
-	"""
-	Crée un mouvement GNR depuis un achat avec le prix réel
-	"""
-	try:
-		if prix_unitaire <= 0:
-			frappe.logger().warning(f"[GNR] Mouvement achat non créé pour {item.item_code} - Prix invalide: {prix_unitaire}")
-			return
-
-		quantity_litres = convert_to_litres(item.qty, item.uom)
-		montant_total = flt(quantity_litres * prix_unitaire, 2)
-		
-		mouvement_gnr = frappe.get_doc({
-			"doctype": "Mouvement GNR",
-			"type_mouvement": "Achat",
-			"date_mouvement": getdate(invoice_doc.posting_date),
-			"reference_document": "Purchase Invoice",
-			"reference_name": invoice_doc.name,
-			"code_produit": item.item_code,
-			"nom_produit": item.item_name,
-			"quantite": quantity_litres,
-			"unite": "Litre",
-			"taux_gnr": prix_unitaire,  # Le "taux" = prix unitaire
-			"montant_taxe_gnr": montant_total,  # Montant total = quantité × prix
-			"prix_unitaire": prix_unitaire,
-			"fournisseur": invoice_doc.supplier,
-			"notes": f"Mouvement automatique depuis facture achat {invoice_doc.name} - Prix: {prix_unitaire}€/L"
-		})
-		
-		mouvement_gnr.insert()
-		mouvement_gnr.submit()
-		
-		frappe.logger().info(f"[GNR] Mouvement achat créé: {mouvement_gnr.name} - Prix RÉEL: {prix_unitaire}€/L")
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur création mouvement GNR achat: {str(e)}")
-
-
-@frappe.whitelist()
-def tester_extraction_prix_facture(invoice_type, invoice_name, item_code):
-	"""
-	Teste l'extraction du prix pour un article spécifique dans une facture
-	"""
-	try:
-		# Récupérer la facture
-		invoice = frappe.get_doc(invoice_type, invoice_name)
-		
-		# Trouver l'item
-		target_item = None
-		for item in invoice.items:
-			if item.item_code == item_code:
-				target_item = item
-				break
-		
-		if not target_item:
-			return {
-				"success": False,
-				"message": f"Article {item_code} non trouvé dans la facture {invoice_name}"
-			}
-		
-		# Tester l'extraction du prix
-		prix_unitaire = get_price_from_invoice_item(target_item)
-		
-		# Informations détaillées
-		details = {
-			"item_code": item_code,
-			"item_name": target_item.item_name,
-			"quantity": target_item.qty,
-			"uom": target_item.uom,
-			"rate_facture": target_item.rate,
-			"prix_par_litre_calcule": prix_unitaire,
-			"quantity_en_litres": convert_to_litres(target_item.qty, target_item.uom),
-			"montant_total": flt(convert_to_litres(target_item.qty, target_item.uom) * prix_unitaire, 2),
-			"groupe_article": frappe.get_value("Item", item_code, "item_group"),
-			"est_gnr": is_gnr_product_by_group(item_code)
-		}
-		
-		return {
-			"success": True,
-			"prix_unitaire": prix_unitaire,
-			"details": details,
-			"message": f"Prix extrait: {prix_unitaire}€/L pour {item_code}"
-		}
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur test extraction prix: {str(e)}")
-		return {"success": False, "error": str(e)}
-
-
-@frappe.whitelist()
-def analyser_prix_factures_recentes(limite=20):
-	"""
-	Analyse les prix dans les factures récentes
-	"""
-	try:
-		# Factures de vente récentes avec articles GNR
-		factures = frappe.db.sql("""
-			SELECT DISTINCT
-				si.name,
-				si.posting_date,
-				si.customer,
-				sii.item_code,
-				i.item_name,
-				sii.qty,
-				sii.uom,
-				sii.rate,
-				sii.amount
-			FROM `tabSales Invoice` si
-			JOIN `tabSales Invoice Item` sii ON si.name = sii.parent
-			JOIN `tabItem` i ON sii.item_code = i.name
-			WHERE si.docstatus = 1
-			AND i.item_group = %s
-			AND si.posting_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-			ORDER BY si.posting_date DESC
-			LIMIT %s
-		""", (GNR_ITEM_GROUP, limite), as_dict=True)
-		
-		analyses = []
-		for facture in factures:
-			# Calculer prix par litre
-			quantity_litres = convert_to_litres(facture.qty, facture.uom)
-			prix_par_litre = facture.rate
-			
-			if facture.uom and facture.uom.lower() not in ['litre', 'l', 'liter']:
-				prix_par_litre = convert_price_to_per_litre(facture.rate, facture.uom)
-			
-			# Vérifier s'il y a un mouvement GNR correspondant
-			mouvement_existe = frappe.db.exists("Mouvement GNR", {
-				"reference_document": "Sales Invoice",
-				"reference_name": facture.name,
-				"code_produit": facture.item_code,
-				"docstatus": 1
-			})
-			
-			analyses.append({
-				"facture": facture.name,
-				"date": facture.posting_date,
-				"client": facture.customer,
-				"article": facture.item_code,
-				"nom_article": facture.item_name,
-				"quantite": facture.qty,
-				"uom": facture.uom,
-				"prix_facture": facture.rate,
-				"prix_par_litre": prix_par_litre,
-				"montant_total": facture.amount,
-				"mouvement_gnr_cree": "✅" if mouvement_existe else "❌",
-				"prix_valide": "✅" if is_valid_price(prix_par_litre) else "❌"
-			})
-		
-		# Statistiques
-		total_factures = len(analyses)
-		avec_mouvements = len([a for a in analyses if a["mouvement_gnr_cree"] == "✅"])
-		prix_valides = len([a for a in analyses if a["prix_valide"] == "✅"])
-		
-		return {
-			"success": True,
-			"total_factures": total_factures,
-			"avec_mouvements_gnr": avec_mouvements,
-			"prix_valides": prix_valides,
-			"taux_couverture": f"{(avec_mouvements/total_factures*100):.1f}%" if total_factures > 0 else "0%",
-			"analyses": analyses,
-			"message": f"Analysé {total_factures} factures - {avec_mouvements} avec mouvements GNR"
-		}
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur analyse prix factures: {str(e)}")
-		return {"success": False, "error": str(e)}
-
-
-@frappe.whitelist()
-def creer_champ_prix_gnr_personnalise():
-	"""
-	Crée un champ personnalisé pour forcer le prix GNR par litre si nécessaire
-	"""
-	try:
-		# Champ dans Sales Invoice Item
-		if not frappe.db.exists("Custom Field", "Sales Invoice Item-custom_prix_gnr_par_litre"):
-			custom_field = frappe.get_doc({
-				"doctype": "Custom Field",
-				"dt": "Sales Invoice Item",
-				"fieldname": "custom_prix_gnr_par_litre",
-				"label": "Prix GNR (€/L)",
-				"fieldtype": "Currency",
-				"insert_after": "rate",
-				"description": "Prix GNR forcé en €/L (optionnel - laissez vide pour utiliser le prix automatique)"
-			})
-			custom_field.insert()
-			print("✅ Champ 'custom_prix_gnr_par_litre' créé pour Sales Invoice Item")
-		
-		# Champ dans Purchase Invoice Item
-		if not frappe.db.exists("Custom Field", "Purchase Invoice Item-custom_prix_gnr_par_litre"):
-			custom_field = frappe.get_doc({
-				"doctype": "Custom Field",
-				"dt": "Purchase Invoice Item",
-				"fieldname": "custom_prix_gnr_par_litre",
-				"label": "Prix GNR (€/L)",
-				"fieldtype": "Currency",
-				"insert_after": "rate",
-				"description": "Prix GNR forcé en €/L (optionnel - laissez vide pour utiliser le prix automatique)"
-			})
-			custom_field.insert()
-			print("✅ Champ 'custom_prix_gnr_par_litre' créé pour Purchase Invoice Item")
-		
-		return {
-			"success": True,
-			"message": "Champs personnalisés pour prix GNR créés avec succès"
-		}
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur création champs prix GNR: {str(e)}")
-		return {"success": False, "error": str(e)}
-	
-def detect_gnr_category_from_item(item_code, item_name=""):
-	"""
-	Détecte la catégorie GNR depuis le code/nom d'article
-	"""
-	text = f"{item_code} {item_name or ''}".upper()
-	
-	if "ADBLUE" in text or "AD BLUE" in text:
-		return "ADBLUE"
-	elif "FIOUL" in text or "FUEL" in text:
-		if "BIO" in text:
-			return "FIOUL_BIO"
-		elif "HIVER" in text:
-			return "FIOUL_HIVER"
-		else:
-			return "FIOUL_STANDARD"
-	elif "GAZOLE" in text or "GAZOIL" in text:
-		return "GAZOLE"
-	else:
-		return "GNR"
-	
-def get_default_rate_by_category(category):
-	"""
-	TAUX PAR DÉFAUT - utilisés seulement en dernier recours
-	Ces taux doivent être mis à jour selon la réglementation
-	"""
-	rates = {
-		"ADBLUE": 0.0,       # AdBlue non taxé
-		"FIOUL_BIO": 3.86,   # Fioul agricole
-		"FIOUL_HIVER": 3.86, 
-		"FIOUL_STANDARD": 3.86,
-		"GAZOLE": 24.81,     # Gazole routier
-		"GNR": 24.81         # GNR standard
-	}
-	return rates.get(category, 24.81)
 
 def get_historical_rate_for_item(item_code):
 	"""
@@ -550,42 +190,147 @@ def get_historical_rate_for_item(item_code):
 		
 	except Exception:
 		return None
-	
-def cleanup_after_cancel(doc, method):
-    """Nettoyage final après annulation facture de vente"""
-    try:
-        # Vérifier s'il reste des mouvements non traités
-        remaining = frappe.get_all("Mouvement GNR",
-                                 filters={
-                                     "reference_document": "Sales Invoice",
-                                     "reference_name": doc.name,
-                                     "docstatus": ["!=", 2]
-                                 })
-        
-        if remaining:
-            frappe.logger().info(f"Nettoyage final: {len(remaining)} mouvements GNR restants pour facture {doc.name}")
-            
-        # Mettre à jour les statuts si nécessaire
-        update_gnr_tracking_status(doc, "cancelled")
-            
-    except Exception as e:
-        frappe.log_error(f"Erreur nettoyage final facture {doc.name}: {str(e)}")
 
-def cleanup_after_cancel_purchase(doc, method):
-    """Nettoyage final après annulation facture d'achat"""
-    try:
-        remaining = frappe.get_all("Mouvement GNR",
-                                 filters={
-                                     "reference_document": "Purchase Invoice", 
-                                     "reference_name": doc.name,
-                                     "docstatus": ["!=", 2]
-                                 })
-        
-        if remaining:
-            frappe.logger().info(f"Nettoyage final: {len(remaining)} mouvements GNR achat restants pour facture {doc.name}")
-            
-        # Mettre à jour les statuts si nécessaire
-        update_gnr_tracking_status(doc, "cancelled")
-            
-    except Exception as e:
-        frappe.log_error(f"Erreur nettoyage final facture achat {doc.name}: {str(e)}")
+
+def detect_gnr_category_from_item(item_code, item_name=""):
+	"""
+	Détecte la catégorie GNR depuis le code/nom d'article
+	"""
+	text = f"{item_code} {item_name or ''}".upper()
+	
+	if "ADBLUE" in text or "AD BLUE" in text:
+		return "ADBLUE"
+	elif "FIOUL" in text or "FUEL" in text:
+		if "BIO" in text:
+			return "FIOUL_BIO"
+		elif "HIVER" in text:
+			return "FIOUL_HIVER"
+		else:
+			return "FIOUL_STANDARD"
+	elif "GAZOLE" in text or "GAZOIL" in text:
+		return "GAZOLE"
+	else:
+		return "GNR"
+
+
+def get_default_rate_by_category(category):
+	"""
+	TAUX PAR DÉFAUT - utilisés seulement en dernier recours
+	Ces taux doivent être mis à jour selon la réglementation
+	"""
+	rates = {
+		"ADBLUE": 0.0,       # AdBlue non taxé
+		"FIOUL_BIO": 3.86,   # Fioul agricole
+		"FIOUL_HIVER": 3.86, 
+		"FIOUL_STANDARD": 3.86,
+		"GAZOLE": 24.81,     # Gazole routier
+		"GNR": 24.81         # GNR standard
+	}
+	return rates.get(category, 24.81)
+
+
+@frappe.whitelist()
+def recalculer_ventes_gnr(date_debut=None, date_fin=None):
+	"""
+	Recalcule les mouvements GNR pour les ventes avec les vrais taux
+	"""
+	try:
+		if not date_debut:
+			date_debut = nowdate()
+		if not date_fin:
+			date_fin = nowdate()
+		
+		# Chercher les factures de vente dans la période
+		invoices = frappe.get_all("Sales Invoice", 
+			filters={
+				"docstatus": 1,
+				"posting_date": ["between", [date_debut, date_fin]]
+			},
+			fields=["name", "posting_date", "customer"]
+		)
+		
+		recalculated = 0
+		for invoice_data in invoices:
+			invoice = frappe.get_doc("Sales Invoice", invoice_data.name)
+			
+			for item in invoice.items:
+				if is_gnr_product(item.item_code):
+					# Supprimer l'ancien mouvement s'il existe
+					existing_movements = frappe.get_all("Mouvement GNR",
+						filters={
+							"reference_document": "Sales Invoice",
+							"reference_name": invoice.name,
+							"code_produit": item.item_code
+						}
+					)
+					
+					for movement in existing_movements:
+						frappe.delete_doc("Mouvement GNR", movement.name)
+					
+					# Recréer avec le vrai taux
+					taux_reel = get_real_gnr_tax_from_invoice(item, invoice)
+					create_gnr_movement_from_sale(invoice, item, taux_reel)
+					recalculated += 1
+		
+		return {
+			"success": True,
+			"message": f"{recalculated} mouvements GNR recalculés avec les vrais taux"
+		}
+		
+	except Exception as e:
+		frappe.log_error(f"Erreur recalcul ventes GNR: {str(e)}")
+		return {
+			"success": False,
+			"message": f"Erreur: {str(e)}"
+		}
+
+
+def update_item_gnr_rate_from_usage(item_code, new_rate):
+	"""
+	Met à jour le taux GNR d'un article basé sur l'usage réel
+	"""
+	try:
+		if 0.1 <= new_rate <= 50:  # Validation du taux
+			frappe.db.set_value("Item", item_code, "gnr_tax_rate", new_rate)
+			frappe.db.commit()
+			
+			frappe.logger().info(f"[GNR] Taux mis à jour pour {item_code}: {new_rate}€/L")
+			return True
+		else:
+			frappe.logger().warning(f"[GNR] Taux invalide pour {item_code}: {new_rate}€/L")
+			return False
+			
+	except Exception as e:
+		frappe.log_error(f"Erreur mise à jour taux GNR: {str(e)}")
+		return False
+
+
+def get_average_rate_for_item(item_code, days=30):
+	"""
+	Calcule le taux moyen pour un article sur une période
+	"""
+	try:
+		from datetime import timedelta
+		
+		date_limite = getdate(nowdate()) - timedelta(days=days)
+		
+		result = frappe.db.sql("""
+			SELECT AVG(taux_gnr) as avg_rate, COUNT(*) as count
+			FROM `tabMouvement GNR`
+			WHERE code_produit = %s 
+			AND taux_gnr > 0.1 AND taux_gnr < 50
+			AND date_mouvement >= %s
+			AND docstatus = 1
+		""", (item_code, date_limite), as_dict=True)
+		
+		if result and result[0].avg_rate:
+			return {
+				"average_rate": flt(result[0].avg_rate, 3),
+				"sample_size": result[0].count
+			}
+		
+		return None
+		
+	except Exception as e:
+		frappe.log_error(f"Erreur calcul taux moyen: {str(e)}")
+		return None

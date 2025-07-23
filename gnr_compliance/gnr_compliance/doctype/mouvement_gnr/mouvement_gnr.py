@@ -1,566 +1,593 @@
-# -*- coding: utf-8 -*-
-"""
-DocType Mouvement GNR avec calcul automatique des taux réels
-Chemin: gnr_compliance/gnr_compliance/doctype/mouvement_gnr/mouvement_gnr.py
-"""
+# Copyright (c) 2025, Mohamed Kachtit and contributors
+# For license information, please see license.txt
 
 import frappe
-from frappe import _
 from frappe.model.document import Document
-from frappe.utils import flt, getdate, nowdate
-from gnr_compliance.integrations.sales import (
-	detect_gnr_category_from_item,
-	get_default_rate_by_category,
-	get_historical_rate_for_item
-)
-
+from frappe.utils import flt, getdate
+import re
 
 class MouvementGNR(Document):
-	def before_insert(self):
-		"""Actions avant insertion"""
-		self.calculer_taux_et_montants()
-		self.valider_donnees()
-	
-	def before_save(self):
-		"""Actions avant sauvegarde"""
-		self.calculer_taux_et_montants()
-		self.valider_donnees()
-	
-	def on_submit(self):
-		"""Actions lors de la soumission"""
-		self.mettre_a_jour_statistiques()
-		self.creer_ecriture_comptable()
-	
-	def on_cancel(self):
-		"""Actions lors de l'annulation"""
-		self.annuler_ecriture_comptable()
+    def validate(self):
+        """Validation avec calculs automatiques UTILISANT LES VRAIS TAUX"""
+        self.calculer_taux_et_montants()
+        self.calculer_periodes()
+    
+    def calculer_taux_et_montants(self):
+        """
+        Calcule automatiquement le taux GNR et le montant de taxe
+        AVEC RÉCUPÉRATION DES VRAIS TAUX DEPUIS TOUTES LES SOURCES
+        """
+        try:
+            # 1. Si pas de taux GNR, essayer de le récupérer depuis toutes les sources possibles
+            if not self.taux_gnr or self.taux_gnr == 0:
+                self.taux_gnr = self.get_real_taux_gnr_from_all_sources()
+            
+            # 2. Calculer le montant de taxe (quantité en L × taux en €/L)
+            if self.quantite and self.taux_gnr:
+                self.montant_taxe_gnr = flt(self.quantite * self.taux_gnr, 2)
+                
+        except Exception as e:
+            frappe.log_error(f"Erreur calcul taux GNR réels pour {self.name}: {str(e)}")
+    
+    def get_real_taux_gnr_from_all_sources(self):
+        """
+        RÉCUPÈRE LE TAUX GNR DEPUIS TOUTES LES SOURCES POSSIBLES
+        
+        PRIORITÉS:
+        1. Document de référence (facture) - VRAIS TAUX
+        2. Taux défini sur l'article
+        3. Historique des mouvements de cet article
+        4. Analyse du nom de l'article
+        5. Taux par défaut selon la catégorie (DERNIER RECOURS)
+        """
+        if not self.code_produit:
+            return 0
+        
+        try:
+            # 1. PRIORITÉ 1: Si on a une référence de document (facture), récupérer depuis celle-ci
+            if self.reference_document and self.reference_name:
+                if self.reference_document in ["Sales Invoice", "Purchase Invoice"]:
+                    doc_rate = self.get_taux_from_reference_document()
+                    if doc_rate and 0.1 <= doc_rate <= 50:
+                        frappe.logger().info(f"[GNR] Taux RÉEL depuis document {self.reference_name}: {doc_rate}€/L")
+                        return doc_rate
+            
+            # 2. PRIORITÉ 2: Taux défini sur l'article maître
+            taux_article = frappe.get_value("Item", self.code_produit, "gnr_tax_rate")
+            if taux_article and taux_article > 0:
+                frappe.logger().info(f"[GNR] Taux depuis article maître: {taux_article}€/L")
+                return taux_article
+            
+            # 3. PRIORITÉ 3: Historique des mouvements de cet article
+            historical_rate = self.get_historical_rate_for_item()
+            if historical_rate:
+                frappe.logger().info(f"[GNR] Taux historique: {historical_rate}€/L")
+                return historical_rate
+            
+            # 4. PRIORITÉ 4: Analyser le nom de l'article pour détecter la catégorie
+            item_name = frappe.get_value("Item", self.code_produit, "item_name")
+            category = self.detect_gnr_category_from_item(item_name)
+            
+            # 5. PRIORITÉ 5: Chercher dans les factures récentes contenant cet article
+            recent_rate = self.get_recent_invoice_rate_for_item()
+            if recent_rate:
+                frappe.logger().info(f"[GNR] Taux depuis factures récentes: {recent_rate}€/L")
+                return recent_rate
+            
+            # 6. DERNIER RECOURS: Taux par défaut selon la catégorie
+            default_rate = self.get_default_rate_by_category(category)
+            frappe.logger().warning(f"[GNR] Taux par défaut utilisé pour {self.code_produit} ({category}): {default_rate}€/L")
+            return default_rate
+            
+        except Exception as e:
+            frappe.log_error(f"Erreur récupération taux depuis toutes sources pour article {self.code_produit}: {str(e)}")
+            return 0
+    
+    def get_taux_from_reference_document(self):
+        """
+        RÉCUPÈRE LE TAUX DEPUIS LE DOCUMENT DE RÉFÉRENCE (FACTURE)
+        """
+        try:
+            if not self.reference_document or not self.reference_name:
+                return 0
+            
+            # Récupérer le document source
+            source_doc = frappe.get_doc(self.reference_document, self.reference_name)
+            
+            # Trouver l'item correspondant dans la facture
+            for item in source_doc.items:
+                if item.item_code == self.code_produit:
+                    # Utiliser la fonction d'extraction des taux réels
+                    return self.get_real_gnr_tax_from_invoice_item(item, source_doc)
+            
+            return 0
+            
+        except Exception as e:
+            frappe.log_error(f"Erreur récupération taux depuis document référence: {str(e)}")
+            return 0
+    
+    def get_real_gnr_tax_from_invoice_item(self, item, invoice_doc):
+        """
+        EXTRAIT LE VRAI TAUX GNR DEPUIS UNE LIGNE DE FACTURE
+        """
+        try:
+            from gnr_compliance.utils.unit_conversions import convert_to_litres, get_item_unit
+            
+            # 1. Chercher dans les taxes de la facture
+            if hasattr(invoice_doc, 'taxes') and invoice_doc.taxes:
+                for tax_row in invoice_doc.taxes:
+                    if tax_row.description:
+                        description_lower = tax_row.description.lower()
+                        gnr_keywords = ['gnr', 'accise', 'ticpe', 'gazole', 'fioul', 'carburant', 'tipp']
+                        
+                        if any(keyword in description_lower for keyword in gnr_keywords):
+                            if item.qty > 0 and tax_row.tax_amount:
+                                # Convertir en litres
+                                item_unit = item.uom or get_item_unit(item.item_code)
+                                quantity_in_litres = convert_to_litres(item.qty, item_unit)
+                                
+                                if quantity_in_litres > 0:
+                                    taux_calcule = abs(tax_row.tax_amount) / quantity_in_litres
+                                    if 0.1 <= taux_calcule <= 50:
+                                        return taux_calcule
+            
+            # 2. Chercher dans un champ personnalisé de l'item
+            if hasattr(item, 'gnr_tax_rate') and item.gnr_tax_rate:
+                if 0.1 <= item.gnr_tax_rate <= 50:
+                    return item.gnr_tax_rate
+            
+            # 3. Analyser les termes de la facture
+            if hasattr(invoice_doc, 'terms') and invoice_doc.terms:
+                patterns = [
+                    r'(\d+[.,]\d+)\s*[€]\s*[/]\s*[Ll]',  # "3.86€/L"
+                    r'taxe[:\s]+(\d+[.,]\d+)',            # "taxe: 3.86"
+                    r'tipp[:\s]+(\d+[.,]\d+)',            # "tipp: 3.86"
+                    r'accise[:\s]+(\d+[.,]\d+)',          # "accise: 3.86"
+                    r'gnr[:\s]+(\d+[.,]\d+)'              # "gnr: 3.86"
+                ]
+                
+                for pattern in patterns:
+                    matches = re.findall(pattern, invoice_doc.terms, re.IGNORECASE)
+                    if matches:
+                        for match in matches:
+                            taux_potentiel = float(match.replace(',', '.'))
+                            if 0.1 <= taux_potentiel <= 50:
+                                return taux_potentiel
+            
+            return 0
+            
+        except Exception as e:
+            frappe.log_error(f"Erreur extraction taux depuis item facture: {str(e)}")
+            return 0
+    
+    def get_historical_rate_for_item(self):
+        """Récupère le taux historique le plus récent pour cet article"""
+        try:
+            result = frappe.db.sql("""
+                SELECT taux_gnr 
+                FROM `tabMouvement GNR` 
+                WHERE code_produit = %s 
+                AND taux_gnr IS NOT NULL 
+                AND taux_gnr > 0.1
+                AND taux_gnr < 50
+                AND docstatus = 1
+                AND name != %s
+                ORDER BY date_mouvement DESC, creation DESC
+                LIMIT 1
+            """, (self.code_produit, self.name or ''))
+            
+            return result[0][0] if result else None
+        except:
+            return None
+    
+    def get_recent_invoice_rate_for_item(self):
+        """Récupère le taux depuis les factures récentes de cet article"""
+        try:
+            result = frappe.db.sql("""
+                SELECT m.taux_gnr
+                FROM `tabMouvement GNR` m
+                WHERE m.code_produit = %s
+                AND m.reference_document IN ('Purchase Invoice', 'Sales Invoice')
+                AND m.taux_gnr IS NOT NULL
+                AND m.taux_gnr > 0.1
+                AND m.taux_gnr < 50
+                AND m.docstatus = 1
+                AND m.name != %s
+                AND m.date_mouvement >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
+                ORDER BY m.date_mouvement DESC
+                LIMIT 1
+            """, (self.code_produit, self.name or ''))
+            
+            return result[0][0] if result else None
+        except:
+            return None
+    
+    def detect_gnr_category_from_item(self, item_name=""):
+        """Détecte la catégorie GNR depuis le code/nom d'article"""
+        text = f"{self.code_produit} {item_name or ''}".upper()
+        
+        if "ADBLUE" in text or "AD BLUE" in text or "AD-BLUE" in text:
+            return "ADBLUE"
+        elif "FIOUL" in text or "FUEL" in text:
+            if "BIO" in text:
+                return "FIOUL_BIO"
+            elif "HIVER" in text or "WINTER" in text:
+                return "FIOUL_HIVER"
+            else:
+                return "FIOUL_STANDARD"
+        elif "GAZOLE" in text or "GAZOIL" in text or "DIESEL" in text:
+            return "GAZOLE"
+        elif "GNR" in text:
+            return "GNR"
+        else:
+            return "GNR"  # Par défaut
+    
+    def get_default_rate_by_category(self, category):
+        """TAUX PAR DÉFAUT - UTILISÉS SEULEMENT EN DERNIER RECOURS"""
+        default_rates = {
+            "ADBLUE": 0.0,      # AdBlue non taxé
+            "FIOUL_BIO": 3.86,  # Fioul agricole bio
+            "FIOUL_HIVER": 3.86, # Fioul agricole hiver
+            "FIOUL_STANDARD": 3.86, # Fioul agricole standard
+            "GAZOLE": 24.81,    # Gazole routier
+            "GNR": 24.81        # GNR standard
+        }
+        return default_rates.get(category, 24.81)
+    
+    def calculer_periodes(self):
+        """Calcule automatiquement trimestre, semestre et année"""
+        if self.date_mouvement:
+            date_obj = getdate(self.date_mouvement)
+            
+            self.annee = date_obj.year
+            self.trimestre = str((date_obj.month - 1) // 3 + 1)
+            self.semestre = "1" if date_obj.month <= 6 else "2"
+    
+    def before_save(self):
+        """Actions avant sauvegarde AVEC RÉCUPÉRATION DES VRAIS TAUX"""
+        self.calculer_taux_et_montants()
+    
+    @frappe.whitelist()
+    def recalculer_taux_et_montants(self):
+        """
+        Méthode publique pour recalculer les taux et montants
+        AVEC RÉCUPÉRATION DES VRAIS TAUX
+        """
+        # Forcer le recalcul en remettant le taux à zéro
+        ancien_taux = self.taux_gnr
+        self.taux_gnr = 0
+        
+        # Recalculer
+        self.calculer_taux_et_montants()
+        
+        # Sauvegarder
+        self.save()
+        
+        return {
+            "ancien_taux": ancien_taux,
+            "nouveau_taux": self.taux_gnr,
+            "montant_taxe_gnr": self.montant_taxe_gnr,
+            "message": f"Taux recalculé: {ancien_taux} → {self.taux_gnr}€/L"
+        }
+    
+    @frappe.whitelist()
+    def analyser_sources_taux(self):
+        """
+        Analyse toutes les sources possibles de taux pour ce mouvement
+        """
+        sources = []
+        
+        try:
+            # 1. Document de référence
+            if self.reference_document and self.reference_name:
+                doc_rate = self.get_taux_from_reference_document()
+                sources.append({
+                    "source": f"Document {self.reference_document}",
+                    "valeur": doc_rate,
+                    "priorite": 1,
+                    "fiable": doc_rate and 0.1 <= doc_rate <= 50
+                })
+            
+            # 2. Article maître
+            item_rate = frappe.get_value("Item", self.code_produit, "gnr_tax_rate")
+            sources.append({
+                "source": "Article maître",
+                "valeur": item_rate,
+                "priorite": 2,
+                "fiable": item_rate and item_rate > 0
+            })
+            
+            # 3. Historique
+            historical_rate = self.get_historical_rate_for_item()
+            sources.append({
+                "source": "Historique mouvements",
+                "valeur": historical_rate,
+                "priorite": 3,
+                "fiable": historical_rate is not None
+            })
+            
+            # 4. Factures récentes
+            recent_rate = self.get_recent_invoice_rate_for_item()
+            sources.append({
+                "source": "Factures récentes",
+                "valeur": recent_rate,
+                "priorite": 4,
+                "fiable": recent_rate is not None
+            })
+            
+            # 5. Catégorie par défaut
+            item_name = frappe.get_value("Item", self.code_produit, "item_name")
+            category = self.detect_gnr_category_from_item(item_name)
+            default_rate = self.get_default_rate_by_category(category)
+            sources.append({
+                "source": f"Défaut ({category})",
+                "valeur": default_rate,
+                "priorite": 5,
+                "fiable": False  # Pas fiable car par défaut
+            })
+            
+            # Trier par priorité
+            sources.sort(key=lambda x: x["priorite"])
+            
+            # Identifier la meilleure source
+            meilleure_source = None
+            for source in sources:
+                if source["fiable"] and source["valeur"]:
+                    meilleure_source = source
+                    break
+            
+            return {
+                "success": True,
+                "taux_actuel": self.taux_gnr,
+                "sources_disponibles": sources,
+                "meilleure_source": meilleure_source,
+                "recommandation": self.get_recommandation_taux(sources, meilleure_source)
+            }
+            
+        except Exception as e:
+            frappe.log_error(f"Erreur analyse sources taux pour {self.name}: {str(e)}")
+            return {"success": False, "error": str(e)}
+    
+    def get_recommandation_taux(self, sources, meilleure_source):
+        """Génère une recommandation basée sur l'analyse des sources"""
+        if not meilleure_source:
+            return "❌ Aucune source fiable trouvée - Vérifiez manuellement"
+        
+        if meilleure_source["priorite"] == 1:
+            return "✅ EXCELLENT - Taux récupéré depuis la facture source"
+        elif meilleure_source["priorite"] == 2:
+            return "🟡 BON - Taux défini sur l'article maître"
+        elif meilleure_source["priorite"] <= 4:
+            return "🟠 MOYEN - Taux depuis historique ou factures récentes"
+        else:
+            return "🔴 SUSPECT - Taux par défaut utilisé - Vérifiez les factures"
 
-
-	def calculer_taux_et_montants(self):
-		"""
-		Calcule automatiquement les taux et montants avec VRAIS TAUX depuis les sources
-		"""
-		try:
-			# 1. Si pas de taux, récupérer depuis les sources réelles
-			if not self.taux_gnr or self.taux_gnr == 0:
-				self.taux_gnr = self.get_real_taux_gnr_from_all_sources()
-			
-			# 2. Calculer le montant de la taxe
-			if self.quantite and self.taux_gnr:
-				self.montant_taxe_gnr = flt(self.quantite * self.taux_gnr, 2)
-			
-			# 3. Calculer le montant HT si pas renseigné
-			if not self.montant_ht and self.quantite:
-				# Estimation basée sur un prix moyen si disponible
-				prix_moyen = self.get_prix_moyen_article()
-				if prix_moyen:
-					self.montant_ht = flt(self.quantite * prix_moyen, 2)
-			
-			# 4. Mettre à jour les dates
-			if not self.date_mouvement:
-				self.date_mouvement = nowdate()
-				
-		except Exception as e:
-			frappe.log_error(f"Erreur calcul taux GNR réels: {str(e)}")
-
-
-	def get_real_taux_gnr_from_all_sources(self):
-		"""
-		Récupère le taux réel depuis toutes les sources possibles
-		PRIORITÉ: 1.Document référence → 2.Article → 3.Historique → 4.Défaut
-		"""
-		if not self.code_produit:
-			return 0
-		
-		try:
-			# 1. PRIORITÉ 1: Depuis le document de référence (facture)
-			if self.reference_document and self.reference_name:
-				doc_rate = self.get_taux_from_reference_document()
-				if doc_rate and 0.1 <= doc_rate <= 50:
-					return doc_rate
-			
-			# 2. PRIORITÉ 2: Taux de l'article
-			item_rate = frappe.get_value("Item", self.code_produit, "gnr_tax_rate") 
-			if item_rate and item_rate > 0:
-				return item_rate
-			
-			# 3. PRIORITÉ 3: Historique de cet article
-			historical = get_historical_rate_for_item(self.code_produit)
-			if historical:
-				return historical
-			
-			# 4. PRIORITÉ 4: Analyse du nom pour déterminer la catégorie
-			item_name = frappe.get_value("Item", self.code_produit, "item_name")
-			category = detect_gnr_category_from_item(self.code_produit, item_name)
-			default_rate = get_default_rate_by_category(category)
-			
-			frappe.logger().warning(f"[GNR] Taux par défaut utilisé pour {self.code_produit}: {default_rate}€/L")
-			return default_rate
-			
-		except Exception as e:
-			frappe.log_error(f"Erreur récupération taux toutes sources: {str(e)}")
-			return get_default_rate_by_category("GNR")
-
-
-	def get_taux_from_reference_document(self):
-		"""
-		Récupère le taux depuis le document de référence
-		"""
-		try:
-			if not self.reference_document or not self.reference_name:
-				return None
-			
-			# Facture de vente
-			if self.reference_document == "Sales Invoice":
-				return self.get_taux_from_sales_invoice()
-			
-			# Facture d'achat
-			elif self.reference_document == "Purchase Invoice":
-				return self.get_taux_from_purchase_invoice()
-			
-			# Entrée de stock
-			elif self.reference_document == "Stock Entry":
-				return self.get_taux_from_stock_entry()
-			
-			return None
-			
-		except Exception as e:
-			frappe.log_error(f"Erreur récupération taux document référence: {str(e)}")
-			return None
-
-
-	def get_taux_from_sales_invoice(self):
-		"""Récupère le taux depuis une facture de vente"""
-		try:
-			invoice = frappe.get_doc("Sales Invoice", self.reference_name)
-			
-			# Chercher l'item correspondant
-			for item in invoice.items:
-				if item.item_code == self.code_produit:
-					# Analyser les taxes
-					if hasattr(invoice, 'taxes') and invoice.taxes:
-						for tax_row in invoice.taxes:
-							if tax_row.description:
-								description_lower = tax_row.description.lower()
-								gnr_keywords = ['gnr', 'accise', 'ticpe', 'gazole', 'fioul', 'carburant']
-								
-								if any(keyword in description_lower for keyword in gnr_keywords):
-									if item.qty > 0 and tax_row.tax_amount:
-										from gnr_compliance.integrations.sales import convert_to_litres
-										quantity_in_litres = convert_to_litres(item.qty, item.uom)
-										
-										if quantity_in_litres > 0:
-											taux_calcule = abs(tax_row.tax_amount) / quantity_in_litres
-											if 0.1 <= taux_calcule <= 50:
-												return taux_calcule
-			return None
-			
-		except Exception as e:
-			frappe.log_error(f"Erreur récupération taux facture vente: {str(e)}")
-			return None
-
-
-	def get_taux_from_purchase_invoice(self):
-		"""Récupère le taux depuis une facture d'achat"""
-		try:
-			invoice = frappe.get_doc("Purchase Invoice", self.reference_name)
-			
-			# Chercher l'item correspondant
-			for item in invoice.items:
-				if item.item_code == self.code_produit:
-					# Analyser les taxes
-					if hasattr(invoice, 'taxes') and invoice.taxes:
-						for tax_row in invoice.taxes:
-							if tax_row.description:
-								description_lower = tax_row.description.lower()
-								gnr_keywords = ['gnr', 'accise', 'ticpe', 'gazole', 'fioul', 'carburant']
-								
-								if any(keyword in description_lower for keyword in gnr_keywords):
-									if item.qty > 0 and tax_row.tax_amount:
-										from gnr_compliance.integrations.sales import convert_to_litres
-										quantity_in_litres = convert_to_litres(item.qty, item.uom)
-										
-										if quantity_in_litres > 0:
-											taux_calcule = abs(tax_row.tax_amount) / quantity_in_litres
-											if 0.1 <= taux_calcule <= 50:
-												return taux_calcule
-			return None
-			
-		except Exception as e:
-			frappe.log_error(f"Erreur récupération taux facture achat: {str(e)}")
-			return None
-
-
-	def get_taux_from_stock_entry(self):
-		"""Récupère le taux depuis une entrée de stock"""
-		try:
-			# Pour les entrées de stock, utiliser l'historique ou la configuration de l'article
-			item_rate = frappe.get_value("Item", self.code_produit, "gnr_tax_rate")
-			if item_rate and item_rate > 0:
-				return item_rate
-			
-			# Sinon, historique
-			return get_historical_rate_for_item(self.code_produit)
-			
-		except Exception as e:
-			frappe.log_error(f"Erreur récupération taux entrée stock: {str(e)}")
-			return None
-
-
-	def get_prix_moyen_article(self):
-		"""Récupère le prix moyen de l'article"""
-		try:
-			# Prix depuis les dernières transactions
-			result = frappe.db.sql("""
-				SELECT AVG(montant_ht / quantite) as prix_moyen
-				FROM `tabMouvement GNR`
-				WHERE code_produit = %s 
-				AND montant_ht > 0 AND quantite > 0
-				AND docstatus = 1
-				AND date_mouvement >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)
-			""", (self.code_produit,))
-			
-			if result and result[0][0]:
-				return flt(result[0][0], 2)
-			
-			# Prix standard de l'article
-			return frappe.get_value("Item", self.code_produit, "standard_rate") or 0
-			
-		except Exception:
-			return 0
-
-
-	def valider_donnees(self):
-		"""Validation des données du mouvement"""
-		try:
-			# Validation du code produit
-			if not self.code_produit:
-				frappe.throw(_("Code produit requis"))
-			
-			# Validation de la quantité
-			if not self.quantite or self.quantite <= 0:
-				frappe.throw(_("Quantité doit être positive"))
-			
-			# Validation du taux GNR
-			if not self.taux_gnr or self.taux_gnr < 0:
-				frappe.throw(_("Taux GNR doit être positif"))
-			
-			if self.taux_gnr > 50:
-				frappe.msgprint(_("Attention: Taux GNR très élevé ({0}€/L)").format(self.taux_gnr), alert=True)
-			
-			# Validation des dates
-			if self.date_mouvement and getdate(self.date_mouvement) > getdate(nowdate()):
-				frappe.throw(_("Date de mouvement ne peut pas être dans le futur"))
-			
-			# Validation du type de mouvement
-			if not self.type_mouvement:
-				self.type_mouvement = "Autre"
-			
-		except Exception as e:
-			frappe.log_error(f"Erreur validation mouvement GNR: {str(e)}")
-			raise
-
-
-	def mettre_a_jour_statistiques(self):
-		"""Met à jour les statistiques d'utilisation"""
-		try:
-			# Incrémenter le compteur d'utilisation de l'article
-			current_count = frappe.get_value("Item", self.code_produit, "total_gnr_movements") or 0
-			frappe.db.set_value("Item", self.code_produit, "total_gnr_movements", current_count + 1)
-			
-			# Mettre à jour la dernière date d'utilisation
-			frappe.db.set_value("Item", self.code_produit, "last_gnr_movement_date", self.date_mouvement)
-			
-			# Log pour traçabilité
-			frappe.logger().info(f"[GNR] Statistiques mises à jour pour {self.code_produit}")
-			
-		except Exception as e:
-			frappe.log_error(f"Erreur mise à jour statistiques: {str(e)}")
-
-
-	def creer_ecriture_comptable(self):
-		"""Crée l'écriture comptable pour la taxe GNR"""
-		try:
-			# Configuration des comptes
-			compte_taxe_gnr = frappe.get_value("Company", self.company, "compte_taxe_gnr")
-			compte_contrepartie = frappe.get_value("Company", self.company, "compte_carburant")
-			
-			if not compte_taxe_gnr or not compte_contrepartie:
-				frappe.logger().warning(f"[GNR] Comptes comptables non configurés pour {self.company}")
-				return
-			
-			# Créer l'écriture journal
-			journal_entry = frappe.get_doc({
-				"doctype": "Journal Entry",
-				"voucher_type": "Journal Entry",
-				"posting_date": self.date_mouvement,
-				"company": self.company,
-				"remark": f"Taxe GNR - {self.type_mouvement} - {self.code_produit} - {self.name}",
-				"user_remark": f"Mouvement GNR automatique depuis {self.name}",
-				"accounts": [
-					{
-						"account": compte_taxe_gnr,
-						"debit_in_account_currency": self.montant_taxe_gnr,
-						"credit_in_account_currency": 0,
-						"reference_type": "Mouvement GNR",
-						"reference_name": self.name
-					},
-					{
-						"account": compte_contrepartie,
-						"debit_in_account_currency": 0,
-						"credit_in_account_currency": self.montant_taxe_gnr,
-						"reference_type": "Mouvement GNR",
-						"reference_name": self.name
-					}
-				]
-			})
-			
-			journal_entry.insert()
-			journal_entry.submit()
-			
-			# Lier l'écriture au mouvement
-			self.db_set("journal_entry", journal_entry.name)
-			
-			frappe.logger().info(f"[GNR] Écriture comptable créée: {journal_entry.name}")
-			
-		except Exception as e:
-			frappe.log_error(f"Erreur création écriture comptable: {str(e)}")
-
-
-	def annuler_ecriture_comptable(self):
-		"""Annule l'écriture comptable associée"""
-		try:
-			if self.journal_entry:
-				journal_entry = frappe.get_doc("Journal Entry", self.journal_entry)
-				if journal_entry.docstatus == 1:
-					journal_entry.cancel()
-					frappe.logger().info(f"[GNR] Écriture comptable annulée: {self.journal_entry}")
-				
-		except Exception as e:
-			frappe.log_error(f"Erreur annulation écriture comptable: {str(e)}")
-
-
-	def get_mouvement_summary(self):
-		"""Retourne un résumé du mouvement pour l'affichage"""
-		return {
-			"code_produit": self.code_produit,
-			"nom_produit": self.nom_produit,
-			"quantite": self.quantite,
-			"unite": self.unite,
-			"taux_gnr": self.taux_gnr,
-			"montant_taxe_gnr": self.montant_taxe_gnr,
-			"type_mouvement": self.type_mouvement,
-			"date_mouvement": self.date_mouvement,
-			"client_fournisseur": self.client_fournisseur,
-			"reference": f"{self.reference_document} - {self.reference_name}" if self.reference_document else None
-		}
-
-
-# MÉTHODES GLOBALES
-
-@frappe.whitelist()
-def recalculer_mouvement_gnr(mouvement_name):
-	"""
-	Recalcule un mouvement GNR spécifique avec les vrais taux
-	"""
-	try:
-		mouvement = frappe.get_doc("Mouvement GNR", mouvement_name)
-		
-		# Sauvegarder l'ancien taux pour comparaison
-		ancien_taux = mouvement.taux_gnr
-		
-		# Forcer le recalcul du taux
-		mouvement.taux_gnr = 0
-		mouvement.calculer_taux_et_montants()
-		
-		# Sauvegarder
-		mouvement.save()
-		
-		return {
-			"success": True,
-			"ancien_taux": ancien_taux,
-			"nouveau_taux": mouvement.taux_gnr,
-			"difference": flt(mouvement.taux_gnr - ancien_taux, 3),
-			"nouveau_montant": mouvement.montant_taxe_gnr
-		}
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur recalcul mouvement GNR: {str(e)}")
-		return {
-			"success": False,
-			"message": str(e)
-		}
-
+# Fonctions utilitaires globales pour les mouvements GNR
 
 @frappe.whitelist()
-def recalculer_tous_les_taux_reels(limite=100):
-	"""
-	Recalcule tous les mouvements avec des taux suspects
-	"""
-	try:
-		# Chercher les mouvements avec taux par défaut suspects
-		mouvements = frappe.db.sql("""
-			SELECT name, code_produit, taux_gnr, reference_document, reference_name
-			FROM `tabMouvement GNR`
-			WHERE docstatus = 1 
-			AND taux_gnr IN (1.77, 3.86, 6.83, 2.84, 24.81)
-			ORDER BY creation DESC 
-			LIMIT %s
-		""", (limite,), as_dict=True)
-		
-		corriges = 0
-		erreurs = 0
-		
-		for mouvement_data in mouvements:
-			try:
-				result = recalculer_mouvement_gnr(mouvement_data.name)
-				if result["success"]:
-					corriges += 1
-				else:
-					erreurs += 1
-			except Exception:
-				erreurs += 1
-		
-		frappe.db.commit()
-		
-		return {
-			"success": True,
-			"total_traites": len(mouvements),
-			"corriges": corriges,
-			"erreurs": erreurs,
-			"message": f"{corriges} mouvements recalculés avec succès, {erreurs} erreurs"
-		}
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur recalcul global: {str(e)}")
-		return {
-			"success": False,
-			"message": str(e)
-		}
-
+def recalculer_mouvement_specifique(movement_name):
+    """
+    Recalcule un mouvement spécifique avec les vrais taux
+    """
+    try:
+        mouvement = frappe.get_doc("Mouvement GNR", movement_name)
+        result = mouvement.recalculer_taux_et_montants()
+        return {
+            "success": True,
+            "mouvement": movement_name,
+            **result
+        }
+    except Exception as e:
+        frappe.log_error(f"Erreur recalcul mouvement {movement_name}: {str(e)}")
+        return {"success": False, "error": str(e)}
 
 @frappe.whitelist()
-def get_gnr_statistics(date_from=None, date_to=None):
-	"""
-	Statistiques des mouvements GNR
-	"""
-	try:
-		conditions = ["docstatus = 1"]
-		values = []
-		
-		if date_from:
-			conditions.append("date_mouvement >= %s")
-			values.append(date_from)
-		
-		if date_to:
-			conditions.append("date_mouvement <= %s")
-			values.append(date_to)
-		
-		where_clause = " AND ".join(conditions)
-		
-		# Statistiques globales
-		global_stats = frappe.db.sql(f"""
-			SELECT 
-				COUNT(*) as total_mouvements,
-				SUM(quantite) as total_quantite,
-				SUM(montant_taxe_gnr) as total_taxe,
-				AVG(taux_gnr) as taux_moyen,
-				MIN(taux_gnr) as taux_min,
-				MAX(taux_gnr) as taux_max
-			FROM `tabMouvement GNR`
-			WHERE {where_clause}
-		""", values, as_dict=True)
-		
-		# Répartition par type
-		by_type = frappe.db.sql(f"""
-			SELECT 
-				type_mouvement,
-				COUNT(*) as nb_mouvements,
-				SUM(quantite) as quantite_totale,
-				SUM(montant_taxe_gnr) as taxe_totale
-			FROM `tabMouvement GNR`
-			WHERE {where_clause}
-			GROUP BY type_mouvement
-			ORDER BY taxe_totale DESC
-		""", values, as_dict=True)
-		
-		# Top produits
-		top_products = frappe.db.sql(f"""
-			SELECT 
-				code_produit,
-				nom_produit,
-				COUNT(*) as nb_mouvements,
-				SUM(quantite) as quantite_totale,
-				SUM(montant_taxe_gnr) as taxe_totale,
-				AVG(taux_gnr) as taux_moyen
-			FROM `tabMouvement GNR`
-			WHERE {where_clause}
-			GROUP BY code_produit, nom_produit
-			ORDER BY taxe_totale DESC
-			LIMIT 10
-		""", values, as_dict=True)
-		
-		return {
-			"success": True,
-			"global_stats": global_stats[0] if global_stats else {},
-			"by_type": by_type,
-			"top_products": top_products
-		}
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur statistiques GNR: {str(e)}")
-		return {
-			"success": False,
-			"message": str(e)
-		}
+def recalculer_tous_mouvements_suspects(limite=100):
+    """
+    Recalcule tous les mouvements avec des taux suspects
+    """
+    try:
+        # Récupérer les mouvements avec taux par défaut
+        mouvements_suspects = frappe.db.sql("""
+            SELECT name, code_produit, taux_gnr, quantite
+            FROM `tabMouvement GNR`
+            WHERE docstatus = 1
+            AND taux_gnr IN (1.77, 3.86, 6.83, 2.84, 24.81)  -- Taux suspects par défaut
+            ORDER BY creation DESC
+            LIMIT %s
+        """, (limite,), as_dict=True)
+        
+        corriges = 0
+        echecs = 0
+        details = []
+        
+        for mouvement_data in mouvements_suspects:
+            try:
+                mouvement = frappe.get_doc("Mouvement GNR", mouvement_data.name)
+                ancien_taux = mouvement.taux_gnr
+                
+                # Forcer le recalcul
+                mouvement.taux_gnr = 0
+                mouvement.calculer_taux_et_montants()
+                
+                if mouvement.taux_gnr != ancien_taux:
+                    mouvement.save()
+                    corriges += 1
+                    details.append({
+                        "mouvement": mouvement.name,
+                        "article": mouvement.code_produit,
+                        "ancien_taux": ancien_taux,
+                        "nouveau_taux": mouvement.taux_gnr,
+                        "source": "Recalcul automatique"
+                    })
+                
+            except Exception as e:
+                frappe.log_error(f"Erreur correction mouvement {mouvement_data.name}: {str(e)}")
+                echecs += 1
+        
+        return {
+            "success": True,
+            "corriges": corriges,
+            "echecs": echecs,
+            "total_traites": len(mouvements_suspects),
+            "message": f"{corriges} mouvements corrigés avec vrais taux, {echecs} échecs",
+            "details_corrections": details[:10]  # Limiter les détails
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Erreur recalcul tous mouvements suspects: {str(e)}")
+        return {"success": False, "error": str(e)}
 
+@frappe.whitelist()
+def analyser_qualite_taux_mouvements():
+    """
+    Analyse la qualité des taux GNR dans tous les mouvements
+    """
+    try:
+        # Statistiques globales
+        stats = frappe.db.sql("""
+            SELECT 
+                COUNT(*) as total_mouvements,
+                COUNT(CASE WHEN taux_gnr = 0 THEN 1 END) as taux_zero,
+                COUNT(CASE WHEN taux_gnr IN (1.77, 3.86, 6.83, 2.84, 24.81) THEN 1 END) as taux_suspects,
+                COUNT(CASE WHEN taux_gnr > 0 AND taux_gnr NOT IN (1.77, 3.86, 6.83, 2.84, 24.81) THEN 1 END) as taux_reels,
+                COUNT(CASE WHEN reference_document IN ('Sales Invoice', 'Purchase Invoice') THEN 1 END) as avec_facture,
+                AVG(CASE WHEN taux_gnr > 0 THEN taux_gnr END) as taux_moyen,
+                MIN(CASE WHEN taux_gnr > 0 THEN taux_gnr END) as taux_min,
+                MAX(taux_gnr) as taux_max,
+                SUM(montant_taxe_gnr) as taxe_totale
+            FROM `tabMouvement GNR`
+            WHERE docstatus = 1
+        """, as_dict=True)
+        
+        if stats:
+            stat = stats[0]
+            total = stat.total_mouvements or 1
+            
+            # Analyse par source
+            par_source = frappe.db.sql("""
+                SELECT 
+                    CASE 
+                        WHEN reference_document = 'Sales Invoice' THEN 'Factures Vente'
+                        WHEN reference_document = 'Purchase Invoice' THEN 'Factures Achat' 
+                        WHEN reference_document = 'Stock Entry' THEN 'Mouvements Stock'
+                        ELSE 'Autres'
+                    END as source,
+                    COUNT(*) as nb_mouvements,
+                    AVG(taux_gnr) as taux_moyen,
+                    COUNT(CASE WHEN taux_gnr IN (1.77, 3.86, 6.83, 2.84, 24.81) THEN 1 END) as nb_suspects
+                FROM `tabMouvement GNR`
+                WHERE docstatus = 1 AND taux_gnr > 0
+                GROUP BY source
+                ORDER BY nb_mouvements DESC
+            """, as_dict=True)
+            
+            return {
+                "success": True,
+                "statistiques_globales": {
+                    "total_mouvements": stat.total_mouvements,
+                    "taux_zero": stat.taux_zero,
+                    "taux_suspects": stat.taux_suspects,
+                    "taux_reels": stat.taux_reels,
+                    "avec_facture": stat.avec_facture,
+                    "pourcentage_reels": round((stat.taux_reels / total) * 100, 1),
+                    "pourcentage_suspects": round((stat.taux_suspects / total) * 100, 1),
+                    "pourcentage_avec_facture": round((stat.avec_facture / total) * 100, 1),
+                    "taux_moyen": round(stat.taux_moyen or 0, 3),
+                    "taux_min": stat.taux_min,
+                    "taux_max": stat.taux_max,
+                    "taxe_totale": round(stat.taxe_totale or 0, 2)
+                },
+                "analyse_par_source": par_source,
+                "recommandations": get_recommandations_qualite(stat, total)
+            }
+        
+        return {"success": False, "message": "Aucune donnée trouvée"}
+        
+    except Exception as e:
+        frappe.log_error(f"Erreur analyse qualité taux mouvements: {str(e)}")
+        return {"success": False, "error": str(e)}
 
-def validate_gnr_movement(doc, method):
-	"""Hook de validation pour les mouvements GNR"""
-	if doc.doctype == "Mouvement GNR":
-		doc.valider_donnees()
+def get_recommandations_qualite(stat, total):
+    """Génère des recommandations basées sur la qualité des taux"""
+    recommandations = []
+    
+    pourcentage_reels = (stat.taux_reels / total) * 100
+    pourcentage_suspects = (stat.taux_suspects / total) * 100
+    
+    if pourcentage_reels >= 80:
+        recommandations.append("✅ EXCELLENTE qualité - Plus de 80% des taux sont réels")
+    elif pourcentage_reels >= 60:
+        recommandations.append("🟡 BONNE qualité - Plus de 60% des taux sont réels")
+    else:
+        recommandations.append("🔴 QUALITÉ INSUFFISANTE - Moins de 60% des taux sont réels")
+    
+    if pourcentage_suspects > 30:
+        recommandations.append(f"⚠️ {pourcentage_suspects:.1f}% des taux sont suspects - Exécutez 'recalculer_tous_mouvements_suspects()'")
+    
+    if stat.taux_zero > 0:
+        recommandations.append(f"ℹ️ {stat.taux_zero} mouvements avec taux zéro - Vérifiez si normal (ex: AdBlue)")
+    
+    pourcentage_avec_facture = (stat.avec_facture / total) * 100
+    if pourcentage_avec_facture < 50:
+        recommandations.append(f"📋 Seulement {pourcentage_avec_facture:.1f}% des mouvements proviennent de factures - Source la plus fiable")
+    
+    return recommandations
 
-
-def update_gnr_rates_from_movements():
-	"""Met à jour les taux GNR des articles basés sur les mouvements récents"""
-	try:
-		# Récupérer tous les articles avec mouvements GNR
-		items_with_movements = frappe.db.sql("""
-			SELECT DISTINCT code_produit
-			FROM `tabMouvement GNR`
-			WHERE docstatus = 1
-			AND date_mouvement >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
-		""", as_dict=True)
-		
-		updated_count = 0
-		
-		for item_data in items_with_movements:
-			item_code = item_data.code_produit
-			
-			# Calculer le taux moyen des 5 derniers mouvements
-			recent_rates = frappe.db.sql("""
-				SELECT taux_gnr
-				FROM `tabMouvement GNR`
-				WHERE code_produit = %s
-				AND taux_gnr > 0.1 AND taux_gnr < 50
-				AND docstatus = 1
-				ORDER BY date_mouvement DESC
-				LIMIT 5
-			""", (item_code,))
-			
-			if recent_rates and len(recent_rates) >= 3:  # Au moins 3 mouvements
-				rates = [rate[0] for rate in recent_rates]
-				average_rate = sum(rates) / len(rates)
-				
-				# Mettre à jour si différence significative
-				current_rate = frappe.get_value("Item", item_code, "gnr_tax_rate") or 0
-				
-				if abs(average_rate - current_rate) > 0.05:  # Différence > 5 centimes
-					frappe.db.set_value("Item", item_code, "gnr_tax_rate", flt(average_rate, 3))
-					updated_count += 1
-		
-		frappe.db.commit()
-		frappe.logger().info(f"[GNR] {updated_count} articles mis à jour avec les nouveaux taux")
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur mise à jour taux depuis mouvements: {str(e)}")
+@frappe.whitelist()
+def comparer_taux_article_vs_mouvements(item_code):
+    """
+    Compare le taux défini sur un article avec les taux utilisés dans les mouvements
+    """
+    try:
+        # Taux de l'article
+        item_rate = frappe.get_value("Item", item_code, "gnr_tax_rate")
+        item_name = frappe.get_value("Item", item_code, "item_name")
+        
+        # Taux dans les mouvements
+        mouvements_stats = frappe.db.sql("""
+            SELECT 
+                COUNT(*) as nb_mouvements,
+                AVG(taux_gnr) as taux_moyen,
+                MIN(taux_gnr) as taux_min,
+                MAX(taux_gnr) as taux_max,
+                COUNT(DISTINCT taux_gnr) as nb_taux_differents,
+                COUNT(CASE WHEN taux_gnr IN (1.77, 3.86, 6.83, 2.84, 24.81) THEN 1 END) as nb_suspects,
+                SUM(montant_taxe_gnr) as taxe_totale
+            FROM `tabMouvement GNR`
+            WHERE code_produit = %s AND docstatus = 1 AND taux_gnr > 0
+        """, (item_code,), as_dict=True)
+        
+        # Répartition par source
+        par_source = frappe.db.sql("""
+            SELECT 
+                reference_document,
+                COUNT(*) as nb_mouvements,
+                AVG(taux_gnr) as taux_moyen
+            FROM `tabMouvement GNR`
+            WHERE code_produit = %s AND docstatus = 1 AND taux_gnr > 0
+            GROUP BY reference_document
+            ORDER BY nb_mouvements DESC
+        """, (item_code,), as_dict=True)
+        
+        stats = mouvements_stats[0] if mouvements_stats else {}
+        
+        return {
+            "success": True,
+            "article": {
+                "code": item_code,
+                "nom": item_name,
+                "taux_defini": item_rate
+            },
+            "mouvements": stats,
+            "repartition_par_source": par_source,
+            "analyse": {
+                "coherent": abs((stats.get("taux_moyen", 0) or 0) - (item_rate or 0)) < 0.5 if item_rate else False,
+                "dispersion_elevee": (stats.get("nb_taux_differents", 0) or 0) > 3,
+                "presence_suspects": (stats.get("nb_suspects", 0) or 0) > 0
+            }
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Erreur comparaison taux article {item_code}: {str(e)}")
+        return {"success": False, "error": str(e)}
