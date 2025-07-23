@@ -495,3 +495,23 @@ def creer_champ_prix_gnr_personnalise():
 	except Exception as e:
 		frappe.log_error(f"Erreur création champs prix GNR: {str(e)}")
 		return {"success": False, "error": str(e)}
+	
+def detect_gnr_category_from_item(item_code, item_name=""):
+	"""
+	Détecte la catégorie GNR depuis le code/nom d'article
+	"""
+	text = f"{item_code} {item_name or ''}".upper()
+	
+	if "ADBLUE" in text or "AD BLUE" in text:
+		return "ADBLUE"
+	elif "FIOUL" in text or "FUEL" in text:
+		if "BIO" in text:
+			return "FIOUL_BIO"
+		elif "HIVER" in text:
+			return "FIOUL_HIVER"
+		else:
+			return "FIOUL_STANDARD"
+	elif "GAZOLE" in text or "GAZOIL" in text:
+		return "GAZOLE"
+	else:
+		return "GNR"
