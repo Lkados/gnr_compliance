@@ -176,12 +176,21 @@ def get_real_gnr_tax_from_invoice(item, invoice_doc):
             frappe.logger().info(f"[GNR] Taux article maître utilisé: {item_rate}€/L")
             return item_rate
 
-        # 6. DERNIER RECOURS: Taux par défaut GNR standard
-        default_rate = 24.81  # Taux GNR standard par défaut
-        frappe.logger().warning(
-            f"[GNR] Aucun taux réel trouvé pour {item.item_code}, utilisation taux par défaut GNR: {default_rate}€/L"
-        )
-        return default_rate
+        # 6. DERNIER RECOURS: Utiliser le taux basé sur l'attestation du client
+        try:
+            customer_category = determine_customer_category_from_attestation(invoice_doc.customer)
+            fallback_rate = get_tax_rate_from_customer_category(customer_category)
+            frappe.logger().warning(
+                f"[GNR] Aucun taux réel trouvé pour {item.item_code}, utilisation taux basé sur attestation client: {fallback_rate}€/L (catégorie: {customer_category})"
+            )
+            return fallback_rate
+        except:
+            # Si même la récupération de l'attestation échoue, taux standard par défaut
+            default_rate = 24.81
+            frappe.logger().warning(
+                f"[GNR] Aucun taux trouvé pour {item.item_code}, utilisation taux standard par défaut: {default_rate}€/L"
+            )
+            return default_rate
 
     except Exception as e:
         frappe.log_error(
@@ -285,15 +294,15 @@ def capture_vente_gnr(doc, method):
                             "quantite": quantity_in_litres,  # QUANTITÉ EN LITRES
                             "prix_unitaire": prix_unitaire_par_litre,  # Prix par litre
                             "client": doc.customer,
-                            "customer_category": customer_category,  # CATÉGORIE BASÉE SUR ATTESTATION
+                            "customer_category": customer_category,  # CATÉGORIE POUR AFFICHAGE ET EXPORT
                             "reference_document": "Sales Invoice",
                             "reference_name": doc.name,
                             "categorie_gnr": gnr_category,
                             "trimestre": get_quarter_from_date(posting_date),
                             "annee": posting_date.year,
                             "semestre": get_semestre_from_date(posting_date),
-                            "taux_gnr": get_tax_rate_from_customer_category(customer_category),  # TAUX BASÉ SUR ATTESTATION
-                            "montant_taxe_gnr": quantity_in_litres * get_tax_rate_from_customer_category(customer_category),  # MONTANT CALCULÉ
+                            "taux_gnr": taux_gnr_reel,  # TAUX RÉEL CALCULÉ DEPUIS LA FACTURE
+                            "montant_taxe_gnr": montant_taxe_reel,  # MONTANT RÉEL CALCULÉ DEPUIS LA FACTURE
                         }
                     )
 
