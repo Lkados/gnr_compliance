@@ -6,7 +6,6 @@
 import frappe
 from frappe import _
 
-
 @frappe.whitelist()
 def cancel_invoice_with_gnr(doctype, name):
     """
@@ -50,7 +49,6 @@ def cancel_invoice_with_gnr(doctype, name):
             "message": f"❌ Erreur: {str(e)}"
         }
 
-
 @frappe.whitelist()
 def cancel_related_gnr_movements(doctype, name):
     """
@@ -79,7 +77,6 @@ def cancel_related_gnr_movements(doctype, name):
     
     return movements_cancelled
 
-
 def cleanup_draft_movements(doctype, name):
     """
     Supprime les mouvements GNR en brouillon restants
@@ -93,7 +90,6 @@ def cleanup_draft_movements(doctype, name):
     
     for movement in draft_movements:
         frappe.delete_doc("Mouvement GNR", movement.name, force=1)
-
 
 @frappe.whitelist()
 def get_gnr_movements_for_document(doctype, name):
@@ -110,51 +106,7 @@ def get_gnr_movements_for_document(doctype, name):
                          },
                          fields=["name", "docstatus", "type_mouvement", "quantite", "creation"])
 
-
 # === FONCTIONS UTILITAIRES POUR LA CONSOLE ===
-
-def quick_cancel_sales_invoice(name):
-    """Fonction rapide pour annuler une facture de vente"""
-    return cancel_invoice_with_gnr("Sales Invoice", name)
-
-def quick_cancel_purchase_invoice(name):
-    """Fonction rapide pour annuler une facture d'achat"""
-    return cancel_invoice_with_gnr("Purchase Invoice", name)
-
-
-# === FONCTIONS DE DEBUG ===
-
-@frappe.whitelist()
-def debug_document_links(doctype, name):
-    """
-    Debug les liens d'un document pour voir ce qui bloque l'annulation
-    """
-    try:
-        # Vérifier les mouvements GNR
-        gnr_movements = frappe.get_all("Mouvement GNR",
-                                      filters={
-                                          "reference_document": doctype,
-                                          "reference_name": name
-                                      },
-                                      fields=["name", "docstatus", "creation"])
-        
-        # Vérifier d'autres liens possibles
-        linked_docs = frappe.get_all("DocType Link",
-                                    filters={
-                                        "parent": doctype
-                                    },
-                                    fields=["link_doctype", "link_fieldname"])
-        
-        result = {
-            "gnr_movements": gnr_movements,
-            "potential_links": linked_docs,
-            "document_status": frappe.get_value(doctype, name, "docstatus")
-        }
-        
-        return result
-        
-    except Exception as e:
-        return {"error": str(e)}
 
 
 @frappe.whitelist()

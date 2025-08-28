@@ -3,20 +3,9 @@ from frappe import _
 from frappe.utils import flt, now_datetime, getdate
 import logging
 from gnr_compliance.utils.unit_conversions import convert_to_litres, get_item_unit
+from gnr_compliance.utils.date_utils import get_quarter_from_date, get_semestre_from_date
 
 logger = logging.getLogger(__name__)
-
-def get_quarter_from_date(date_obj):
-    """Calcule le trimestre à partir d'une date"""
-    if isinstance(date_obj, str):
-        date_obj = getdate(date_obj)
-    return str((date_obj.month - 1) // 3 + 1)
-
-def get_semestre_from_date(date_obj):
-    """Calcule le semestre à partir d'une date"""
-    if isinstance(date_obj, str):
-        date_obj = getdate(date_obj)
-    return "1" if date_obj.month <= 6 else "2"
 
 def capture_mouvement_stock(doc, method):
     """
@@ -80,61 +69,17 @@ def capture_mouvement_stock(doc, method):
 
 def check_if_gnr_item(item_code):
     """
-    Vérifie si un article est un produit GNR en se basant sur le groupe d'article
+    Vérifie si un article est GNR basé UNIQUEMENT sur le marquage manuel
     """
     try:
-        # Liste des groupes GNR valides
-        GNR_ITEM_GROUPS = [
-            "Combustibles/Carburants/GNR",
-            "Combustibles/Carburants/Gazole", 
-            "Combustibles/Adblue",
-            "Combustibles/Fioul/Bio",
-            "Combustibles/Fioul/Hiver",
-            "Combustibles/Fioul/Standard"
-        ]
-        
-        # Méthode 1 : Vérifier le champ is_gnr_tracked
+        # Vérifier uniquement le champ is_gnr_tracked
         is_tracked = frappe.get_value("Item", item_code, "is_gnr_tracked")
-        if is_tracked:
-            return True
-        
-        # Méthode 2 : Vérifier le groupe d'article
-        item_group = frappe.get_value("Item", item_code, "item_group")
-        
-        if item_group in GNR_ITEM_GROUPS:
-            # Marquer automatiquement comme GNR
-            category, tax_rate = get_category_and_rate_from_group(item_group)
-            
-            try:
-                frappe.db.set_value("Item", item_code, {
-                    "is_gnr_tracked": 1,
-                    "gnr_tracked_category": category,
-                    "gnr_tax_rate": tax_rate
-                })
-                frappe.logger().info(f"[GNR] Article {item_code} marqué automatiquement comme GNR (groupe: {item_group})")
-            except:
-                pass
-                
-            return True
-        
-        return False
+        return bool(is_tracked)
         
     except Exception as e:
         frappe.logger().error(f"[GNR] Erreur vérification article {item_code}: {str(e)}")
         return False
 
-def get_category_and_rate_from_group(item_group):
-    """Retourne la catégorie et le taux selon le groupe"""
-    mapping = {
-        "Combustibles/Carburants/GNR": ("GNR", 24.81),
-        "Combustibles/Carburants/Gazole": ("GAZOLE", 24.81),
-        "Combustibles/Adblue": ("ADBLUE", 0),
-        "Combustibles/Fioul/Bio": ("FIOUL_BIO", 3.86),
-        "Combustibles/Fioul/Hiver": ("FIOUL_HIVER", 3.86),
-        "Combustibles/Fioul/Standard": ("FIOUL_STANDARD", 3.86)
-    }
-    
-    return mapping.get(item_group, ("GNR", 24.81))
 
 def create_gnr_movement_from_stock(stock_doc, item):
     """
@@ -163,9 +108,12 @@ def create_gnr_movement_from_stock(stock_doc, item):
         # NOUVEAU : Convertir en litres
         quantity_in_litres = convert_to_litres(item.qty, item_unit)
         
-        # Log de la conversion
+        # Log de la conversion avec prix
         if item_unit != "L" and item_unit != "l":
+            prix_original_par_unite = (item.basic_rate or item.valuation_rate or 0) / item.qty if item.qty else 0
+            prix_par_litre = (item.basic_rate or item.valuation_rate or 0) / (quantity_in_litres / item.qty) if item.qty else 0
             frappe.logger().info(f"[GNR] Conversion Stock: {item.qty} {item_unit} = {quantity_in_litres} litres")
+            frappe.logger().info(f"[GNR] Prix Stock: {prix_original_par_unite:.2f}€/{item_unit} → {prix_par_litre:.4f}€/L")
         
         # Créer le mouvement GNR
         mouvement_gnr = frappe.new_doc("Mouvement GNR")
@@ -390,62 +338,3 @@ def find_stock_entries_with_gnr(from_date=None, to_date=None):
         frappe.log_error(f"Erreur recherche Stock Entry GNR: {str(e)}")
         return []
 
-@frappe.whitelist()
-def debug_stock_entry(stock_entry_name):
-    """
-    Debug détaillé d'un Stock Entry spécifique
-    """
-    try:
-        se = frappe.get_doc("Stock Entry", stock_entry_name)
-        
-        print(f"\n🔍 Debug Stock Entry: {stock_entry_name}")
-        print(f"  Type: {se.stock_entry_type}")
-        print(f"  Date: {se.posting_date}")
-        print(f"  Statut: {se.docstatus}")
-        
-        print(f"\n  📦 Articles:")
-        gnr_count = 0
-        for item in se.items:
-            is_gnr = frappe.get_value("Item", item.item_code, "is_gnr_tracked")
-            item_group = frappe.get_value("Item", item.item_code, "item_group")
-            
-            if is_gnr:
-                gnr_count += 1
-                print(f"    ✅ {item.item_code} - Qty: {item.qty} - Groupe: {item_group}")
-            else:
-                print(f"    ❌ {item.item_code} - Qty: {item.qty} - Groupe: {item_group}")
-        
-        # Vérifier les mouvements GNR existants
-        existing = frappe.get_all("Mouvement GNR", 
-                                 filters={
-                                     "reference_document": "Stock Entry",
-                                     "reference_name": stock_entry_name
-                                 },
-                                 fields=["name", "docstatus", "code_produit", "quantite"])
-        
-        print(f"\n  📊 Mouvements GNR existants: {len(existing)}")
-        for mov in existing:
-            status = "Soumis" if mov.docstatus == 1 else "Brouillon"
-            print(f"    - {mov.name}: {mov.code_produit} - {mov.quantite} [{status}]")
-        
-        return {
-            'name': stock_entry_name,
-            'gnr_items': gnr_count,
-            'existing_movements': len(existing)
-        }
-        
-    except Exception as e:
-        print(f"❌ Erreur: {str(e)}")
-        return {'error': str(e)}
-    
-@frappe.whitelist()
-def test_stock_capture(stock_entry_name):
-    """
-    Fonction de test pour capturer un Stock Entry spécifique
-    """
-    try:
-        doc = frappe.get_doc("Stock Entry", stock_entry_name)
-        capture_mouvement_stock(doc, "test")
-        return {'success': True, 'message': 'Test exécuté - vérifiez les logs'}
-    except Exception as e:
-        return {'success': False, 'error': str(e)}

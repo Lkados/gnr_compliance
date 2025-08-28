@@ -112,17 +112,14 @@ def fix_gnr_items_by_group(dry_run=True):
 def get_category_from_group(item_group):
     """
     Détermine la catégorie GNR et le taux de taxe selon le groupe d'article
+    Un seul type GNR maintenant
     """
-    mapping = {
-        "Combustibles/Carburants/GNR": ("GNR", 24.81),
-        "Combustibles/Carburants/Gazole": ("GAZOLE", 24.81),
-        "Combustibles/Adblue": ("ADBLUE", 0),  # Pas de taxe sur AdBlue
-        "Combustibles/Fioul/Bio": ("FIOUL_BIO", 3.86),  # Taux agricole
-        "Combustibles/Fioul/Hiver": ("FIOUL_HIVER", 3.86),  # Taux agricole
-        "Combustibles/Fioul/Standard": ("FIOUL_STANDARD", 3.86)  # Taux agricole
-    }
+    # Un seul type GNR maintenant
+    if item_group in GNR_ITEM_GROUPS:
+        return ("GNR", 24.81)
     
-    return mapping.get(item_group, ("GNR", 24.81))
+    # Fallback pour compatibilité
+    return ("GNR", 24.81)
 
 @frappe.whitelist()
 def verify_gnr_groups():
@@ -145,10 +142,8 @@ def verify_gnr_groups():
         FROM `tabItem`
         WHERE item_group LIKE '%Combustible%'
            OR item_group LIKE '%Carburant%'
-           OR item_group LIKE '%Fioul%'
            OR item_group LIKE '%Gazole%'
            OR item_group LIKE '%GNR%'
-           OR item_group LIKE '%Adblue%'
         GROUP BY item_group
         ORDER BY item_group
     """, as_dict=True)

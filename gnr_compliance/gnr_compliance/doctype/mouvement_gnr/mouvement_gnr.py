@@ -37,19 +37,8 @@ class MouvementGNR(Document):
             if taux_article and taux_article > 0:
                 return taux_article
             
-            # Si pas de taux sur l'article, utiliser des taux par défaut selon la catégorie
-            item_group = frappe.get_value("Item", self.code_produit, "item_group")
-            
-            default_rates = {
-                "Combustibles/Carburants/GNR": 24.81,
-                "Combustibles/Carburants/Gazole": 24.81,
-                "Combustibles/Adblue": 0,
-                "Combustibles/Fioul/Bio": 3.86,
-                "Combustibles/Fioul/Hiver": 3.86,
-                "Combustibles/Fioul/Standard": 3.86
-            }
-            
-            return default_rates.get(item_group, 0)
+            # Si pas de taux sur l'article, utiliser le taux GNR standard
+            return 24.81
             
         except Exception as e:
             frappe.log_error(f"Erreur récupération taux pour article {self.code_produit}: {str(e)}")

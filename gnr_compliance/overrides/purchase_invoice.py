@@ -7,7 +7,6 @@ import frappe
 from frappe import _
 from erpnext.accounts.doctype.purchase_invoice.purchase_invoice import PurchaseInvoice
 
-
 class PurchaseInvoiceGNR(PurchaseInvoice):
     """
     Extension de Purchase Invoice pour gérer l'annulation automatique des mouvements GNR

@@ -110,30 +110,3 @@ def get_item_unit(item_code):
     """
     return frappe.get_value("Item", item_code, "stock_uom") or "L"
 
-@frappe.whitelist()
-def test_conversions():
-    """
-    Teste les conversions d'unités
-    """
-    tests = [
-        (1, "m³", "litres"),
-        (1, "m³", "hectolitres"),
-        (100, "L", "hectolitres"),
-        (1, "hL", "litres"),
-        (1000, "L", "m³"),
-    ]
-    
-    print("\n🧪 Test des conversions d'unités GNR:")
-    print("-" * 50)
-    
-    for qty, from_unit, to_unit in tests:
-        if to_unit == "litres":
-            result = convert_to_litres(qty, from_unit)
-            print(f"{qty} {from_unit} = {result} litres")
-        elif to_unit == "hectolitres":
-            result = convert_to_hectolitres(qty, from_unit)
-            print(f"{qty} {from_unit} = {result} hL")
-        elif to_unit == "m³":
-            litres = convert_to_litres(qty, from_unit)
-            result = convert_from_litres(litres, "m³")
-            print(f"{qty} {from_unit} = {result} m³")

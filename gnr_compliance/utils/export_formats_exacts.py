@@ -3,13 +3,12 @@ from frappe.utils import getdate, flt, format_date
 from datetime import datetime, timedelta
 from io import BytesIO
 
-
 @frappe.whitelist()
 def generer_declaration_trimestrielle_exacte(from_date, to_date):
     """
-    Génère la Déclaration Trimestrielle au format exact
+    Génère la Déclaration Trimestrielle au format exact TIPAccEne
     Comptabilité Matière - Gasoil Non Routier
-    AVEC RÉCUPÉRATION DES VRAIS TAUX ET MONTANTS
+    Respecte exactement le format fourni par l'utilisateur
     """
     try:
         # Vérifier que openpyxl est disponible
@@ -49,42 +48,39 @@ def generer_declaration_trimestrielle_exacte(from_date, to_date):
             bottom=Side(style="thin"),
         )
 
-        # === EN-TÊTE ===
-        # Ligne 1 : Titre principal
-        ws.merge_cells("A1:K1")
+        # === EN-TÊTE SELON FORMAT EXACT TIPAccEne ===
+        # Ligne 1 : Titre principal (fusionné sur toute la largeur)
+        ws.merge_cells("A1:G1")
         ws["A1"] = "Comptabilité Matière - Gasoil Non Routier"
         ws["A1"].font = title_font
         ws["A1"].alignment = center_align
 
-        # Ligne 3 : Informations société
-        company_name = (
-            company_doc.company_name if company_doc else "ETS STEPHANE JOSSEAUME"
-        )
-        ws["A3"] = f"Société : {company_name}"
-        ws["A3"].font = header_font
+        # Ligne 2 : Informations société
+        company_name = company_doc.company_name if company_doc else "ETS STEPHANE JOSSEAUME"
+        ws["A2"] = f"Société : {company_name}"
+        ws["A2"].font = header_font
 
-        # Ligne 4 : Numéro d'autorisation (récupéré des paramètres ou par défaut)
+        # Ligne 3 : Numéro d'autorisation
         try:
-            numero_autorisation = frappe.get_single_value(
-                "GNR Settings", "numero_autorisation"
-            )
+            numero_autorisation = frappe.get_single_value("GNR Settings", "numero_autorisation")
         except:
-            numero_autorisation = None
+            numero_autorisation = "08/2024/AMIENS"
+        
+        ws["A3"] = f"Numéro d'autorisation : {numero_autorisation}"
+        ws["A3"].font = normal_font
 
-        if not numero_autorisation:
-            numero_autorisation = "08/2024/AMIENS"  # Valeur par défaut
+        # Ligne 4 : Période (format exact)
+        periode_text = generer_texte_periode_trimestre_exact(from_date, to_date)
+        ws["A4"] = periode_text
+        ws["A4"].font = header_font
 
-        ws["A4"] = f"Numéro d'autorisation : {numero_autorisation}"
-        ws["A4"].font = normal_font
+        # Ligne 5 : Ligne vide
+        ws["A5"] = ""
 
-        # Ligne 5 : Période
-        periode_text = generer_texte_periode_trimestre(from_date, to_date)
-        ws["A5"] = periode_text
-        ws["A5"].font = header_font
-
-        # Ligne 7 : Sous-titre
-        ws["A7"] = "Volume réel en Litres"
-        ws["A7"].font = header_font
+        # Ligne 6 : Sous-titre avec alignement exact
+        ws["A6"] = ""
+        ws["B6"] = "Volume réel en Litres"
+        ws["B6"].font = header_font
 
         # === EN-TÊTES COLONNES (Ligne 8) ===
         headers = [
@@ -224,7 +220,6 @@ def generer_declaration_trimestrielle_exacte(from_date, to_date):
             f"Erreur génération déclaration trimestrielle réelle: {str(e)}"
         )
         return {"success": False, "message": f"Erreur: {str(e)}"}
-
 
 @frappe.whitelist()
 def generer_liste_semestrielle_exacte(from_date, to_date):
@@ -407,7 +402,6 @@ def generer_liste_semestrielle_exacte(from_date, to_date):
         frappe.log_error(f"Erreur génération liste semestrielle réelle: {str(e)}")
         return {"success": False, "message": f"Erreur: {str(e)}"}
 
-
 def calculer_mouvements_journaliers_reels(from_date, to_date):
     """
     Calcule les mouvements jour par jour avec stocks ET VRAIS MONTANTS
@@ -536,7 +530,6 @@ def calculer_mouvements_journaliers_reels(from_date, to_date):
         frappe.log_error(f"Erreur calcul mouvements journaliers réels: {str(e)}")
         return []
 
-
 def get_clients_avec_attestation_reels(from_date, to_date):
     """
     Récupère les clients avec distinction attestation/sans attestation
@@ -591,7 +584,6 @@ def get_clients_avec_attestation_reels(from_date, to_date):
         frappe.log_error(f"Erreur récupération clients avec vrais tarifs: {str(e)}")
         return []
 
-
 def format_date_french(date_obj):
     """Formate la date en français comme '2-janv.'"""
     mois_francais = {
@@ -610,7 +602,6 @@ def format_date_french(date_obj):
     }
     return f"{date_obj.day}-{mois_francais[date_obj.month]}"
 
-
 def generer_texte_periode_trimestre(from_date, to_date):
     """Génère le texte de période pour le trimestre"""
     start = datetime.strptime(from_date, "%Y-%m-%d")
@@ -626,7 +617,6 @@ def generer_texte_periode_trimestre(from_date, to_date):
     else:
         return f"4ème Trimestre {start.year} (Octobre - Novembre - Décembre)"
 
-
 def generer_texte_periode_semestre(from_date, to_date):
     """Génère le texte de période pour le semestre"""
     start = datetime.strptime(from_date, "%Y-%m-%d")
@@ -636,7 +626,6 @@ def generer_texte_periode_semestre(from_date, to_date):
         return f"{start.year} Janvier à Juin"
     else:
         return f"{start.year} Juillet à Décembre"
-
 
 def determiner_trimestre_text(from_date, to_date):
     """Détermine le texte exact pour le nom de fichier"""
@@ -651,7 +640,6 @@ def determiner_trimestre_text(from_date, to_date):
         return f"{start.year} Juillet à Septembre"
     else:
         return f"{start.year} Octobre à Décembre"
-
 
 @frappe.whitelist()
 def analyser_coherence_donnees(from_date, to_date):
@@ -735,7 +723,6 @@ def analyser_coherence_donnees(from_date, to_date):
     except Exception as e:
         frappe.log_error(f"Erreur analyse cohérence: {str(e)}")
         return {"success": False, "error": str(e)}
-
 
 @frappe.whitelist()
 def export_donnees_brutes_excel(from_date, to_date):

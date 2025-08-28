@@ -1,9 +1,7 @@
 # gnr_compliance/api.py
 import frappe
 from frappe import _
-import pandas as pd
 from io import BytesIO
-import json
 
 @frappe.whitelist()
 def generate_export(export_format, from_date, to_date, periode_type="Trimestrielle", inclure_details=False):
@@ -14,12 +12,8 @@ def generate_export(export_format, from_date, to_date, periode_type="Trimestriel
     
     if "Excel" in export_format:
         return generate_excel_export(data, from_date, to_date, inclure_details)
-    elif "CSV" in export_format:
-        return generate_csv_export(data, from_date, to_date)
-    elif "PDF" in export_format:
-        return generate_pdf_export(data, from_date, to_date)
-    elif "XML" in export_format:
-        return generate_xml_export(data, from_date, to_date)
+    else:
+        frappe.throw(_("Format d'export non supporté: {0}").format(export_format))
 
 def generate_excel_export(data, from_date, to_date, inclure_details):
     """Génération export Excel format arrêté trimestriel"""
@@ -77,7 +71,7 @@ def generate_excel_export(data, from_date, to_date, inclure_details):
     
     # Feuille détails clients si demandée
     if inclure_details:
-        clients_data = get_clients_data(from_date, to_date)
+        clients_data = get_clients_data_for_period(from_date, to_date)
         clients_sheet = workbook.add_worksheet('Liste Clients Semestrielle')
         
         client_headers = ['Code Client', 'Nom Client', 'SIRET', 'Quantité (hL)', 'Montant HT (€)']
@@ -103,6 +97,24 @@ def generate_excel_export(data, from_date, to_date, inclure_details):
     file_doc.save()
     
     return {"file_url": file_doc.file_url}
+
+def get_clients_data_for_period(from_date, to_date):
+    """Récupération des données clients pour la période"""
+    return frappe.db.sql("""
+        SELECT 
+            c.name as code_client,
+            c.customer_name as nom_client,
+            c.tax_id as siret,
+            SUM(m.quantite) as quantite_totale,
+            SUM(m.quantite * m.prix_unitaire) as montant_ht
+        FROM `tabMouvement GNR` m
+        LEFT JOIN `tabCustomer` c ON m.client = c.name
+        WHERE m.date_mouvement BETWEEN %s AND %s
+        AND m.docstatus = 1
+        AND m.type_mouvement = 'Vente'
+        GROUP BY m.client
+        ORDER BY quantite_totale DESC
+    """, (from_date, to_date), as_dict=True)
 
 def get_gnr_data(from_date, to_date, periode_type):
     """Récupération des données GNR pour la période"""

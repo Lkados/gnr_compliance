@@ -59,6 +59,7 @@ custom_fields = {
             "label": "Catégorie GNR",
             "fieldtype": "Data",
             "read_only": 1,
+            "default": "GNR",
             "depends_on": "is_gnr_tracked",
             "insert_after": "is_gnr_tracked"
         },

@@ -7,7 +7,6 @@ from datetime import datetime, timedelta
 # Groupe d'articles GNR officiel
 GNR_ITEM_GROUP = "Combustibles/Carburants/GNR"
 
-
 def get_dynamic_gnr_rate_for_item(item_code, source_document=None, source_name=None):
 	"""
 	Fonction principale pour récupérer le taux GNR dynamiquement (SANS valeurs par défaut)
@@ -50,7 +49,6 @@ def get_dynamic_gnr_rate_for_item(item_code, source_document=None, source_name=N
 		frappe.log_error(f"Erreur récupération taux dynamique pour {item_code}: {str(e)}")
 		return 0.0
 
-
 def is_item_in_gnr_group(item_code):
 	"""
 	Vérifie si un article est dans le groupe GNR officiel
@@ -60,7 +58,6 @@ def is_item_in_gnr_group(item_code):
 		return item_group == GNR_ITEM_GROUP
 	except:
 		return False
-
 
 def extract_rate_from_source_document(item_code, doc_type, doc_name):
 	"""
@@ -77,7 +74,6 @@ def extract_rate_from_source_document(item_code, doc_type, doc_name):
 	except Exception as e:
 		frappe.log_error(f"Erreur extraction taux document {doc_type} {doc_name}: {str(e)}")
 		return None
-
 
 def extract_rate_from_invoice(item_code, doc_type, doc_name):
 	"""
@@ -111,7 +107,7 @@ def extract_rate_from_invoice(item_code, doc_type, doc_name):
 					if tax_row.description:
 						description_lower = tax_row.description.lower()
 						gnr_keywords = [
-							'gnr', 'accise', 'ticpe', 'gazole', 'fioul', 'carburant', 
+							'gnr', 'accise', 'ticpe', 'gazole', 'carburant', 
 							'diesel', 'combustible', 'taxe intérieure', 'tipp'
 						]
 						
@@ -129,7 +125,6 @@ def extract_rate_from_invoice(item_code, doc_type, doc_name):
 	except Exception as e:
 		frappe.log_error(f"Erreur extraction taux facture {doc_name}: {str(e)}")
 		return None
-
 
 def deduce_rate_from_item_totals(item, invoice):
 	"""
@@ -163,7 +158,6 @@ def deduce_rate_from_item_totals(item, invoice):
 		frappe.log_error(f"Erreur déduction taux: {str(e)}")
 		return None
 
-
 def extract_rate_from_stock_entry(item_code, doc_name):
 	"""
 	Extrait le taux depuis une entrée de stock (lien facture d'achat)
@@ -194,7 +188,6 @@ def extract_rate_from_stock_entry(item_code, doc_name):
 	except Exception as e:
 		frappe.log_error(f"Erreur extraction taux stock entry: {str(e)}")
 		return None
-
 
 def get_recent_item_rate(item_code, days=30):
 	"""
@@ -249,7 +242,6 @@ def get_recent_item_rate(item_code, days=30):
 		frappe.log_error(f"Erreur récupération taux historique: {str(e)}")
 		return None
 
-
 def is_valid_rate(rate):
 	"""
 	Vérifie si un taux GNR est valide et réaliste
@@ -260,7 +252,6 @@ def is_valid_rate(rate):
 		return 0.01 <= rate <= 100.0
 	except:
 		return False
-
 
 def convert_to_litres(quantity, uom):
 	"""
@@ -305,7 +296,6 @@ def convert_to_litres(quantity, uom):
 		frappe.log_error(f"Erreur conversion UOM {uom}: {str(e)}")
 		return flt(quantity, 3)
 
-
 def log_rate_source(item_code, rate, source):
 	"""
 	Log la source du taux pour traçabilité
@@ -314,7 +304,6 @@ def log_rate_source(item_code, rate, source):
 		frappe.logger().info(f"[GNR] {item_code}: Taux {rate}€/L depuis {source}")
 	except:
 		pass
-
 
 @frappe.whitelist()
 def analyser_taux_disponibles_periode(from_date=None, to_date=None):
@@ -384,7 +373,6 @@ def analyser_taux_disponibles_periode(from_date=None, to_date=None):
 		frappe.log_error(f"Erreur analyse taux période: {str(e)}")
 		return {"success": False, "error": str(e)}
 
-
 def generer_recommandations_taux(articles_data):
 	"""
 	Génère des recommandations basées sur l'analyse des taux
@@ -425,7 +413,6 @@ def generer_recommandations_taux(articles_data):
 		})
 	
 	return recommendations
-
 
 @frappe.whitelist()
 def detecter_articles_sans_taux():
@@ -473,7 +460,6 @@ def detecter_articles_sans_taux():
 	except Exception as e:
 		frappe.log_error(f"Erreur détection articles sans taux: {str(e)}")
 		return {"success": False, "error": str(e)}
-
 
 @frappe.whitelist()
 def recalculer_avec_taux_dynamiques(limite=50):

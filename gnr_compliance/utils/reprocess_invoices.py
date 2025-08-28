@@ -368,32 +368,3 @@ def find_invoices_with_gnr_item(item_code, from_date=None, to_date=None):
         frappe.log_error("Erreur recherche factures avec article {}: {}".format(item_code, str(e)))
         return {'error': str(e)}
 
-@frappe.whitelist()
-def test_invoice_capture(invoice_type, invoice_name):
-    """
-    Teste la capture GNR sur une facture spécifique
-    
-    Args:
-        invoice_type: "Sales Invoice" ou "Purchase Invoice"
-        invoice_name: Nom de la facture
-    """
-    try:
-        doc = frappe.get_doc(invoice_type, invoice_name)
-        
-        print("\n🧪 Test capture GNR pour {} {}".format(invoice_type, invoice_name))
-        print("  Date: {}".format(doc.posting_date))
-        print("  Statut: {}".format('Soumis' if doc.docstatus == 1 else 'Brouillon'))
-        
-        if invoice_type == "Sales Invoice":
-            print("  Client: {}".format(doc.customer))
-            from gnr_compliance.integrations.sales import capture_vente_gnr
-            capture_vente_gnr(doc, "test")
-        else:
-            print("  Fournisseur: {}".format(doc.supplier))
-            from gnr_compliance.integrations.sales import capture_achat_gnr
-            capture_achat_gnr(doc, "test")
-        
-        return {'success': True, 'message': 'Test exécuté - vérifiez les mouvements GNR'}
-        
-    except Exception as e:
-        return {'success': False, 'error': str(e)}

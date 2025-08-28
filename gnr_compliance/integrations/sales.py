@@ -3,38 +3,66 @@ import frappe
 from frappe import _
 from frappe.utils import getdate, flt
 from gnr_compliance.utils.unit_conversions import convert_to_litres, get_item_unit
+from gnr_compliance.utils.date_utils import get_quarter_from_date, get_semestre_from_date
 import re
 
-# Groupes d'articles GNR valides (SEULEMENT pour la détection, pas pour les prix)
-GNR_ITEM_GROUPS = [
-    "Combustibles/Carburants/GNR",
-    "Combustibles/Carburants/Gazole",
-    "Combustibles/Adblue",
-    "Combustibles/Fioul/Bio",
-    "Combustibles/Fioul/Hiver",
-    "Combustibles/Fioul/Standard",
-]
-
-
-def detect_gnr_category_from_item(item_code, item_name=""):
-    """Détecte la catégorie GNR depuis le code/nom d'article"""
-    text = f"{item_code} {item_name or ''}".upper()
-
-    if "ADBLUE" in text or "AD BLUE" in text or "AD-BLUE" in text:
-        return "ADBLUE"
-    elif "FIOUL" in text or "FUEL" in text:
-        if "BIO" in text:
-            return "FIOUL_BIO"
-        elif "HIVER" in text or "WINTER" in text:
-            return "FIOUL_HIVER"
+def determine_customer_category_from_attestation(customer_code):
+    """
+    Détermine la catégorie du client basée sur son attestation d'accise
+    
+    Args:
+        customer_code: Code du client
+        
+    Returns:
+        str: "Agricole" si attestation complète, "Autre" sinon
+    """
+    try:
+        # Récupérer les champs d'attestation du client
+        customer_data = frappe.db.get_value(
+            "Customer", 
+            customer_code, 
+            ["custom_n_dossier_", "custom_date_de_depot"], 
+            as_dict=True
+        )
+        
+        if customer_data:
+            # Vérifier si l'attestation est complète (numéro ET date)
+            has_complete_attestation = (
+                customer_data.get('custom_n_dossier_') and 
+                str(customer_data.get('custom_n_dossier_', '')).strip() != '' and
+                customer_data.get('custom_date_de_depot')
+            )
+            
+            if has_complete_attestation:
+                frappe.logger().info(f"[GNR] Client {customer_code} avec attestation complète → Catégorie Agricole (3.86€/hL)")
+                return "Agricole"
+            else:
+                frappe.logger().info(f"[GNR] Client {customer_code} sans attestation complète → Catégorie Autre (24.81€/hL)")
+                return "Autre"
         else:
-            return "FIOUL_STANDARD"
-    elif "GAZOLE" in text or "GAZOIL" in text or "DIESEL" in text:
-        return "GAZOLE"
-    elif "GNR" in text:
-        return "GNR"
+            frappe.logger().warning(f"[GNR] Client {customer_code} non trouvé → Catégorie Autre par défaut")
+            return "Autre"
+            
+    except Exception as e:
+        frappe.log_error(f"Erreur détermination catégorie client {customer_code}: {str(e)}")
+        return "Autre"
+
+def get_tax_rate_from_customer_category(customer_category):
+    """
+    Retourne le taux de taxe basé sur la catégorie client
+    
+    Args:
+        customer_category: "Agricole" ou "Autre"
+        
+    Returns:
+        float: Taux en €/hL
+    """
+    if customer_category == "Agricole":
+        return 3.86  # Taux réduit avec attestation
     else:
-        return "GNR"  # Par défaut
+        return 24.81  # Taux standard sans attestation
+
+
 
 
 def get_historical_rate_for_item(item_code):
@@ -58,19 +86,6 @@ def get_historical_rate_for_item(item_code):
         return result[0][0] if result else None
     except:
         return None
-
-
-def get_default_rate_by_category(category):
-    """TAUX PAR DÉFAUT - UTILISÉS SEULEMENT EN DERNIER RECOURS"""
-    default_rates = {
-        "ADBLUE": 0.0,  # AdBlue non taxé
-        "FIOUL_BIO": 3.86,  # Fioul agricole bio
-        "FIOUL_HIVER": 3.86,  # Fioul agricole hiver
-        "FIOUL_STANDARD": 3.86,  # Fioul agricole standard
-        "GAZOLE": 24.81,  # Gazole routier
-        "GNR": 24.81,  # GNR standard
-    }
-    return default_rates.get(category, 24.81)
 
 
 def get_real_gnr_tax_from_invoice(item, invoice_doc):
@@ -149,27 +164,22 @@ def get_real_gnr_tax_from_invoice(item, invoice_doc):
                             )
                             return taux_potentiel
 
-        # 4. PRIORITÉ 4: Analyser le nom de l'article pour déduire le type
-        category = detect_gnr_category_from_item(
-            item.item_code, getattr(item, "item_name", "")
-        )
-
-        # 5. PRIORITÉ 5: Chercher dans l'historique des mouvements de cet article
+        # 4. PRIORITÉ 4: Chercher dans l'historique des mouvements de cet article
         historical_rate = get_historical_rate_for_item(item.item_code)
         if historical_rate and 0.1 <= historical_rate <= 50:
             frappe.logger().info(f"[GNR] Taux historique utilisé: {historical_rate}€/L")
             return historical_rate
 
-        # 6. PRIORITÉ 6: Utiliser le taux défini sur l'article maître
+        # 5. PRIORITÉ 5: Utiliser le taux défini sur l'article maître
         item_rate = frappe.get_value("Item", item.item_code, "gnr_tax_rate")
         if item_rate and 0.1 <= item_rate <= 50:
             frappe.logger().info(f"[GNR] Taux article maître utilisé: {item_rate}€/L")
             return item_rate
 
-        # 7. DERNIER RECOURS: Taux par défaut selon la catégorie détectée
-        default_rate = get_default_rate_by_category(category)
+        # 6. DERNIER RECOURS: Taux par défaut GNR standard
+        default_rate = 24.81  # Taux GNR standard par défaut
         frappe.logger().warning(
-            f"[GNR] Aucun taux réel trouvé pour {item.item_code}, utilisation taux par défaut {category}: {default_rate}€/L"
+            f"[GNR] Aucun taux réel trouvé pour {item.item_code}, utilisation taux par défaut GNR: {default_rate}€/L"
         )
         return default_rate
 
@@ -179,43 +189,14 @@ def get_real_gnr_tax_from_invoice(item, invoice_doc):
         )
         return 0.0
 
-
 def check_if_gnr_item_for_sales(item_code):
     """
-    Vérifie si un article est GNR basé sur le groupe d'article OU le marquage manuel
+    Vérifie si un article est GNR basé UNIQUEMENT sur le marquage manuel
     """
     try:
-        # Méthode 1 : Vérifier le champ is_gnr_tracked
+        # Vérifier uniquement le champ is_gnr_tracked
         is_tracked = frappe.get_value("Item", item_code, "is_gnr_tracked")
-        if is_tracked:
-            return True
-
-        # Méthode 2 : Vérifier le groupe d'article
-        item_group = frappe.get_value("Item", item_code, "item_group")
-
-        if item_group in GNR_ITEM_GROUPS:
-            # Marquer automatiquement comme GNR avec catégorie détectée
-            category = detect_gnr_category_from_item(item_code)
-
-            try:
-                frappe.db.set_value(
-                    "Item",
-                    item_code,
-                    {
-                        "is_gnr_tracked": 1,
-                        "gnr_tracked_category": category,
-                        # NE PAS définir gnr_tax_rate ici - il sera récupéré depuis les factures
-                    },
-                )
-                frappe.logger().info(
-                    f"[GNR] Article {item_code} marqué automatiquement comme GNR (catégorie: {category})"
-                )
-            except:
-                pass
-
-            return True
-
-        return False
+        return bool(is_tracked)
 
     except Exception as e:
         frappe.logger().error(
@@ -223,34 +204,11 @@ def check_if_gnr_item_for_sales(item_code):
         )
         return False
 
-
 def capture_vente_gnr(doc, method):
     """
     Capture automatique des ventes GNR depuis Sales Invoice
     AVEC RÉCUPÉRATION DES VRAIS TAUX DEPUIS LES FACTURES
     """
-
-    def get_quarter_from_date(date_value):
-        """Calcule le trimestre à partir d'une date"""
-        if isinstance(date_value, str):
-            date_value = getdate(date_value)
-
-        month = date_value.month
-        if month <= 3:
-            return "1"
-        elif month <= 6:
-            return "2"
-        elif month <= 9:
-            return "3"
-        else:
-            return "4"
-
-    def get_semestre_from_date(date_value):
-        """Calcule le semestre à partir d'une date"""
-        if isinstance(date_value, str):
-            date_value = getdate(date_value)
-
-        return "1" if date_value.month <= 6 else "2"
 
     try:
         movements_created = 0
@@ -282,16 +240,21 @@ def capture_vente_gnr(doc, method):
                     # Convertir la quantité en LITRES
                     quantity_in_litres = convert_to_litres(item.qty, item_unit)
 
-                    # Log de la conversion
+                    # Log de la conversion avec prix
                     if item_unit != "L" and item_unit != "l":
+                        prix_unitaire_original = item.rate / item.qty if item.qty else 0
                         frappe.logger().info(
                             f"[GNR] Conversion: {item.qty} {item_unit} = {quantity_in_litres} litres"
                         )
+                        frappe.logger().info(
+                            f"[GNR] Prix: {prix_unitaire_original:.2f}€/{item_unit} → {prix_unitaire_par_litre:.4f}€/L"
+                        )
 
-                    # Obtenir catégorie GNR
-                    gnr_category = detect_gnr_category_from_item(
-                        item.item_code, getattr(item, "item_name", "")
-                    )
+                    # Déterminer la catégorie client basée sur l'attestation d'accise
+                    customer_category = determine_customer_category_from_attestation(doc.customer)
+                    
+                    # Catégorie GNR fixe (un seul type)
+                    gnr_category = "GNR"
 
                     # RÉCUPÉRER LE VRAI TAUX GNR DEPUIS LA FACTURE
                     taux_gnr_reel = get_real_gnr_tax_from_invoice(item, doc)
@@ -301,12 +264,16 @@ def capture_vente_gnr(doc, method):
                         quantity_in_litres * taux_gnr_reel if taux_gnr_reel else 0
                     )
 
-                    # Prix unitaire par litre
-                    prix_unitaire_par_litre = (
-                        item.rate / (quantity_in_litres / item.qty)
-                        if item.qty
-                        else item.rate
-                    )
+                    # Prix unitaire par litre (depuis le prix total de la ligne facture)
+                    if item.qty and quantity_in_litres > 0:
+                        prix_unitaire_par_litre = item.rate / (quantity_in_litres / item.qty)
+                    else:
+                        prix_unitaire_par_litre = item.rate
+                    
+                    # Validation du prix calculé
+                    if prix_unitaire_par_litre <= 0:
+                        frappe.logger().warning(f"[GNR] Prix par litre invalide: {prix_unitaire_par_litre}€/L pour {item.item_code}")
+                        prix_unitaire_par_litre = 0
 
                     # Créer le mouvement GNR AVEC QUANTITÉ EN LITRES
                     mouvement = frappe.new_doc("Mouvement GNR")
@@ -318,14 +285,15 @@ def capture_vente_gnr(doc, method):
                             "quantite": quantity_in_litres,  # QUANTITÉ EN LITRES
                             "prix_unitaire": prix_unitaire_par_litre,  # Prix par litre
                             "client": doc.customer,
+                            "customer_category": customer_category,  # CATÉGORIE BASÉE SUR ATTESTATION
                             "reference_document": "Sales Invoice",
                             "reference_name": doc.name,
                             "categorie_gnr": gnr_category,
                             "trimestre": get_quarter_from_date(posting_date),
                             "annee": posting_date.year,
                             "semestre": get_semestre_from_date(posting_date),
-                            "taux_gnr": taux_gnr_reel,  # TAUX RÉEL PAR LITRE
-                            "montant_taxe_gnr": montant_taxe_reel,  # MONTANT RÉEL
+                            "taux_gnr": get_tax_rate_from_customer_category(customer_category),  # TAUX BASÉ SUR ATTESTATION
+                            "montant_taxe_gnr": quantity_in_litres * get_tax_rate_from_customer_category(customer_category),  # MONTANT CALCULÉ
                         }
                     )
 
@@ -364,7 +332,6 @@ def capture_vente_gnr(doc, method):
             _("Erreur lors de la création des mouvements GNR: {0}").format(str(e))
         )
 
-
 def capture_achat_gnr(doc, method):
     """
     Capture automatique des achats GNR depuis Purchase Invoice
@@ -374,28 +341,6 @@ def capture_achat_gnr(doc, method):
         doc: Document Purchase Invoice
         method: Méthode appelée (on_submit, etc.)
     """
-
-    def get_quarter_from_date(date_value):
-        """Calcule le trimestre à partir d'une date"""
-        if isinstance(date_value, str):
-            date_value = getdate(date_value)
-
-        month = date_value.month
-        if month <= 3:
-            return "1"
-        elif month <= 6:
-            return "2"
-        elif month <= 9:
-            return "3"
-        else:
-            return "4"
-
-    def get_semestre_from_date(date_value):
-        """Calcule le semestre à partir d'une date"""
-        if isinstance(date_value, str):
-            date_value = getdate(date_value)
-
-        return "1" if date_value.month <= 6 else "2"
 
     try:
         movements_created = 0
@@ -427,10 +372,11 @@ def capture_achat_gnr(doc, method):
                     item_unit = item.uom or get_item_unit(item.item_code)
                     quantity_in_litres = convert_to_litres(item.qty, item_unit)
 
-                    # Obtenir catégorie GNR
-                    gnr_category = detect_gnr_category_from_item(
-                        item.item_code, getattr(item, "item_name", "")
-                    )
+                    # Déterminer la catégorie client basée sur l'attestation d'accise
+                    customer_category = determine_customer_category_from_attestation(doc.customer)
+                    
+                    # Catégorie GNR fixe (un seul type)
+                    gnr_category = "GNR"
 
                     # RÉCUPÉRER LE VRAI TAUX GNR DEPUIS LA FACTURE D'ACHAT
                     taux_gnr_reel = get_real_gnr_tax_from_invoice(item, doc)
@@ -440,12 +386,16 @@ def capture_achat_gnr(doc, method):
                         quantity_in_litres * taux_gnr_reel if taux_gnr_reel else 0
                     )
 
-                    # Prix unitaire par litre
-                    prix_unitaire_par_litre = (
-                        item.rate / (quantity_in_litres / item.qty)
-                        if item.qty
-                        else item.rate
-                    )
+                    # Prix unitaire par litre (depuis le prix total de la ligne facture)
+                    if item.qty and quantity_in_litres > 0:
+                        prix_unitaire_par_litre = item.rate / (quantity_in_litres / item.qty)
+                    else:
+                        prix_unitaire_par_litre = item.rate
+                    
+                    # Validation du prix calculé
+                    if prix_unitaire_par_litre <= 0:
+                        frappe.logger().warning(f"[GNR] Prix par litre invalide: {prix_unitaire_par_litre}€/L pour {item.item_code}")
+                        prix_unitaire_par_litre = 0
 
                     # Créer le mouvement GNR
                     mouvement = frappe.new_doc("Mouvement GNR")
@@ -498,7 +448,6 @@ def capture_achat_gnr(doc, method):
             _("Erreur lors de la création des mouvements GNR achat: {0}").format(str(e))
         )
 
-
 def cancel_vente_gnr(doc, method):
     """
     Annule les mouvements GNR lors de l'annulation d'une facture de vente
@@ -536,7 +485,6 @@ def cancel_vente_gnr(doc, method):
 
     except Exception as e:
         frappe.log_error(f"Erreur annulation GNR pour facture {doc.name}: {str(e)}")
-
 
 def cancel_achat_gnr(doc, method):
     """
@@ -578,7 +526,6 @@ def cancel_achat_gnr(doc, method):
             f"Erreur annulation GNR achat pour facture {doc.name}: {str(e)}"
         )
 
-
 def cleanup_after_cancel(doc, method):
     """Nettoyage final après annulation facture de vente"""
     try:
@@ -603,7 +550,6 @@ def cleanup_after_cancel(doc, method):
     except Exception as e:
         frappe.log_error(f"Erreur nettoyage final facture {doc.name}: {str(e)}")
 
-
 def cleanup_after_cancel_purchase(doc, method):
     """Nettoyage final après annulation facture d'achat"""
     try:
@@ -627,7 +573,6 @@ def cleanup_after_cancel_purchase(doc, method):
     except Exception as e:
         frappe.log_error(f"Erreur nettoyage final facture achat {doc.name}: {str(e)}")
 
-
 def update_gnr_tracking_status(doc, status):
     """Met à jour le statut de suivi GNR pour un document"""
     try:
@@ -639,7 +584,6 @@ def update_gnr_tracking_status(doc, status):
 
     except Exception as e:
         frappe.log_error(f"Erreur mise à jour statut GNR pour {doc.name}: {str(e)}")
-
 
 @frappe.whitelist()
 def get_invoice_gnr_summary(doctype, name):
@@ -688,7 +632,6 @@ def get_invoice_gnr_summary(doctype, name):
             f"Erreur récupération résumé GNR pour {doctype} {name}: {str(e)}"
         )
         return {"error": str(e)}
-
 
 @frappe.whitelist()
 def recalculer_tous_les_taux_reels_factures(limite=100):
@@ -766,7 +709,6 @@ def recalculer_tous_les_taux_reels_factures(limite=100):
         frappe.log_error(f"Erreur recalcul taux réels depuis factures: {str(e)}")
         return {"success": False, "error": str(e)}
 
-
 @frappe.whitelist()
 def analyser_qualite_taux_factures():
     """
@@ -821,7 +763,6 @@ def analyser_qualite_taux_factures():
     except Exception as e:
         frappe.log_error(f"Erreur analyse qualité taux factures: {str(e)}")
         return {"success": False, "error": str(e)}
-
 
 def get_recommandation_qualite_factures(stats, total):
     """Génère une recommandation basée sur la qualité des taux"""

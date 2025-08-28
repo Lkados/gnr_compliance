@@ -360,7 +360,7 @@ def extraire_taux_gnr_depuis_facture(facture, item):
             for tax_row in facture.taxes:
                 if tax_row.description:
                     description_lower = tax_row.description.lower()
-                    gnr_keywords = ['gnr', 'accise', 'ticpe', 'gazole', 'fioul', 'carburant']
+                    gnr_keywords = ['gnr', 'accise', 'ticpe', 'gazole', 'carburant']
                     if any(keyword in description_lower for keyword in gnr_keywords):
                         if item.qty > 0 and tax_row.tax_amount:
                             taux_calcule = abs(tax_row.tax_amount) / item.qty

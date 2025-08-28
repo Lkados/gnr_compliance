@@ -29,7 +29,7 @@
   {
    "fieldname": "naming_series",
    "fieldtype": "Select",
-   "label": "S\u00e9rie de Nommage",
+   "label": "Série de Nommage",
    "options": "MGNR-.YYYY.-",
    "reqd": 1
   },
@@ -60,7 +60,7 @@
   {
    "fieldname": "quantite",
    "fieldtype": "Float",
-   "label": "Quantit\u00e9",
+   "label": "Quantité",
    "precision": "3",
    "reqd": 1
   },
@@ -72,7 +72,7 @@
   {
    "fieldname": "taux_gnr",
    "fieldtype": "Currency",
-   "label": "Taux GNR (\u20ac/hL)"
+   "label": "Taux GNR (€/hL)"
   },
   {
    "fieldname": "montant_taxe_gnr",
@@ -87,6 +87,15 @@
    "options": "Customer"
   },
   {
+   "fieldname": "customer_category",
+   "label": "Catégorie Client",
+   "fieldtype": "Select",
+   "options": "Agricole\nAutre",
+   "read_only": 1,
+   "description": "Catégorie déterminée automatiquement selon l'attestation d'accise",
+   "depends_on": "eval:doc.client"
+  },
+  {
    "fieldname": "fournisseur",
    "fieldtype": "Link",
    "label": "Fournisseur",
@@ -95,19 +104,19 @@
   {
    "fieldname": "reference_document",
    "fieldtype": "Link",
-   "label": "Document R\u00e9f\u00e9rence",
+   "label": "Document Référence",
    "options": "DocType"
   },
   {
    "fieldname": "reference_name",
    "fieldtype": "Dynamic Link",
-   "label": "Nom R\u00e9f\u00e9rence",
+   "label": "Nom Référence",
    "options": "reference_document"
   },
   {
    "fieldname": "categorie_gnr",
    "fieldtype": "Data",
-   "label": "Cat\u00e9gorie GNR"
+   "label": "Catégorie GNR"
   },
   {
    "fieldname": "trimestre",
@@ -118,7 +127,7 @@
   {
    "fieldname": "annee",
    "fieldtype": "Int",
-   "label": "Ann\u00e9e"
+   "label": "Année"
   },
   {
    "fieldname": "semestre",

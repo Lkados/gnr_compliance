@@ -7,7 +7,6 @@ import frappe
 from frappe import _
 from erpnext.accounts.doctype.sales_invoice.sales_invoice import SalesInvoice
 
-
 class SalesInvoiceGNR(SalesInvoice):
     """
     Extension de Sales Invoice pour gérer l'annulation automatique des mouvements GNR

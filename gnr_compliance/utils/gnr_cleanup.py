@@ -111,7 +111,6 @@ def nettoyer_configuration_gnr():
 		print(f"❌ ERREUR: {str(e)}")
 		return {"success": False, "error": str(e)}
 
-
 @frappe.whitelist()
 def verifier_configuration_post_nettoyage():
 	"""
@@ -193,7 +192,6 @@ def verifier_configuration_post_nettoyage():
 		frappe.log_error(f"Erreur vérification post-nettoyage: {str(e)}")
 		return {"success": False, "error": str(e)}
 
-
 @frappe.whitelist()
 def analyser_factures_sans_taux_gnr(limite=20):
 	"""
@@ -271,7 +269,6 @@ def analyser_factures_sans_taux_gnr(limite=20):
 		frappe.log_error(f"Erreur analyse factures: {str(e)}")
 		return {"success": False, "error": str(e)}
 
-
 def analyser_taxes_facture(doctype, docname):
 	"""
 	Analyse les taxes d'une facture pour détecter les taxes GNR
@@ -299,7 +296,6 @@ def analyser_taxes_facture(doctype, docname):
 	except Exception as e:
 		frappe.log_error(f"Erreur analyse taxes facture {docname}: {str(e)}")
 		return []
-
 
 @frappe.whitelist()
 def creer_champs_personnalises_gnr():
@@ -351,47 +347,3 @@ def creer_champs_personnalises_gnr():
 		frappe.log_error(f"Erreur création champs personnalisés: {str(e)}")
 		return {"success": False, "error": str(e)}
 
-
-@frappe.whitelist()
-def test_detection_groupe_gnr():
-	"""
-	Teste la détection des articles GNR par groupe
-	"""
-	try:
-		print(f"\n🧪 TEST DE DÉTECTION GNR PAR GROUPE")
-		print("=" * 42)
-		
-		from gnr_compliance.integrations.sales import is_gnr_product_by_group
-		
-		# Test sur quelques articles
-		test_articles = frappe.db.sql("""
-			SELECT name, item_code, item_name, item_group
-			FROM `tabItem`
-			WHERE item_group IN (%s, 'Combustibles/Carburants/Gazole', 'Combustibles/Adblue', 'Autres')
-			LIMIT 10
-		""", (GNR_ITEM_GROUP,), as_dict=True)
-		
-		print(f"🔍 Test sur {len(test_articles)} articles:")
-		
-		gnr_detectes = 0
-		for article in test_articles:
-			est_gnr = is_gnr_product_by_group(article.name)
-			status = "✅ GNR" if est_gnr else "❌ Non-GNR"
-			
-			if est_gnr:
-				gnr_detectes += 1
-			
-			print(f"   {status} - {article.item_code} (groupe: {article.item_group})")
-		
-		print(f"\n📊 Résultat: {gnr_detectes}/{len(test_articles)} articles détectés comme GNR")
-		
-		return {
-			"success": True,
-			"articles_testes": len(test_articles),
-			"gnr_detectes": gnr_detectes,
-			"message": f"Test réussi - {gnr_detectes} articles GNR détectés"
-		}
-		
-	except Exception as e:
-		frappe.log_error(f"Erreur test détection: {str(e)}")
-		return {"success": False, "error": str(e)}

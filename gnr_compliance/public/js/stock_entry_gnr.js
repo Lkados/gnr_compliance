@@ -46,9 +46,7 @@ frappe.ui.form.on("Stock Entry Detail", {
 				callback: function (r) {
 					if (r.message && r.message.is_gnr_tracked) {
 						frappe.show_alert({
-							message: __("Article GNR détecté: {0}", [
-								r.message.gnr_tracked_category || "Catégorie inconnue",
-							]),
+							message: __("Article GNR détecté"),
 							indicator: "orange",
 						});
 					}
@@ -66,11 +64,9 @@ function add_gnr_stock_indicators(frm) {
 			item.item_code &&
 			(item.item_code.toLowerCase().includes("gnr") ||
 				item.item_code.toLowerCase().includes("gazole") ||
-				item.item_code.toLowerCase().includes("fioul") ||
 				(item.item_name &&
 					(item.item_name.toLowerCase().includes("gnr") ||
-						item.item_name.toLowerCase().includes("gazole") ||
-						item.item_name.toLowerCase().includes("fioul"))))
+						item.item_name.toLowerCase().includes("gazole"))))
 		);
 	});
 
@@ -133,6 +129,18 @@ function analyze_gnr_stock_movements(frm) {
 	} else {
 		frappe.msgprint(__("Aucun mouvement GNR détecté."));
 	}
+}
+
+function is_potential_gnr_item(item) {
+	// Détection basée uniquement sur les termes GNR/Gazole
+	return (
+		item.item_code &&
+		(item.item_code.toLowerCase().includes("gnr") ||
+			item.item_code.toLowerCase().includes("gazole") ||
+			(item.item_name &&
+				(item.item_name.toLowerCase().includes("gnr") ||
+					item.item_name.toLowerCase().includes("gazole"))))
+	);
 }
 
 function enable_gnr_tracking(frm) {

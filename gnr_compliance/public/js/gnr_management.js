@@ -4,6 +4,11 @@
 frappe.provide("gnr_compliance.utils");
 
 gnr_compliance.utils = {
+	// Exporter les déclarations GNR avec format officiel
+	export_declarations: function() {
+		const export_dialog = new GNRExportDialog('Mouvement GNR', {});
+		export_dialog.show();
+	},
 	// Soumet tous les mouvements GNR en brouillon
 	submit_pending_movements: function () {
 		frappe.confirm(__("Soumettre tous les mouvements GNR en brouillon ?"), function () {
@@ -314,7 +319,7 @@ frappe.ui.form.on("Mouvement GNR", {
 				},
 				callback: function (r) {
 					if (r.message) {
-						frm.set_value("categorie_gnr", r.message.gnr_tracked_category);
+						frm.set_value("categorie_gnr", "GNR");
 						frm.set_value("taux_gnr", r.message.gnr_tax_rate);
 
 						// Recalculer la taxe
