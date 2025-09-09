@@ -19,14 +19,9 @@ frappe.ui.form.on("Stock Entry", {
 	},
 
 	stock_entry_type: function (frm) {
-		// Activer la détection GNR pour certains types de mouvements
-		if (
-			["Material Receipt", "Material Issue", "Material Transfer"].includes(
-				frm.doc.stock_entry_type
-			)
-		) {
-			enable_gnr_tracking(frm);
-		}
+		// Activer la détection GNR pour TOUS les types de mouvements
+		// Plus de restriction sur des types spécifiques
+		enable_gnr_tracking(frm);
 	},
 });
 

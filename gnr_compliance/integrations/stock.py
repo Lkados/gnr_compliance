@@ -16,8 +16,8 @@ def capture_mouvement_stock(doc, method):
         # Log pour debug
         frappe.logger().info(f"[GNR] Capture mouvement stock: {doc.name}, Type: {doc.stock_entry_type}")
         
-        # Vérifier TOUS les types de Stock Entry (pas seulement certains)
-        # Types courants : Material Transfer, Material Issue, Material Receipt, Material Transfer for Manufacture, etc.
+        # Traiter TOUS les types de Stock Entry sans restriction
+        # Accepte tous les types: Sales, Purchase, Custom types, etc.
         
         gnr_items = []
         gnr_count = 0
@@ -153,18 +153,7 @@ def create_gnr_movement_from_stock(stock_doc, item):
 def determine_movement_type(stock_entry_type, item):
     """Détermine le type de mouvement GNR selon le type de Stock Entry"""
     
-    # Mapping des types de Stock Entry vers types de mouvement GNR
-    type_mapping = {
-        "Material Receipt": "Entrée",
-        "Material Issue": "Sortie", 
-        "Material Transfer": "Transfert",
-        "Manufacture": "Production",
-        "Repack": "Production",
-        "Send to Subcontractor": "Sortie",
-        "Material Transfer for Manufacture": "Transfert"
-    }
-    
-    # Déterminer selon les entrepôts source/cible
+    # Déterminer selon les entrepôts source/cible (logique principale)
     if item.s_warehouse and item.t_warehouse:
         return "Transfert"
     elif item.t_warehouse and not item.s_warehouse:
@@ -172,8 +161,22 @@ def determine_movement_type(stock_entry_type, item):
     elif item.s_warehouse and not item.t_warehouse:
         return "Sortie"
     
-    # Utiliser le mapping par défaut
-    return type_mapping.get(stock_entry_type, "Stock")
+    # Si aucun entrepôt n'est défini, déterminer selon le type de Stock Entry
+    # Utiliser une logique plus flexible basée sur les mots-clés
+    stock_entry_type_lower = stock_entry_type.lower() if stock_entry_type else ""
+    
+    if any(word in stock_entry_type_lower for word in ["receipt", "receive", "purchase", "buy", "entrée"]):
+        return "Entrée"
+    elif any(word in stock_entry_type_lower for word in ["issue", "sale", "sell", "delivery", "sortie", "consumption"]):
+        return "Sortie"
+    elif any(word in stock_entry_type_lower for word in ["transfer", "move", "transfert"]):
+        return "Transfert"
+    elif any(word in stock_entry_type_lower for word in ["manufacture", "production", "repack", "assembly"]):
+        return "Production"
+    
+    # Par défaut, essayer de déterminer selon le contexte
+    # Si on ne peut pas déterminer, utiliser "Stock" comme type générique
+    return "Stock"
 
 def cancel_mouvement_stock(doc, method):
     """Annule les mouvements GNR lors de l'annulation d'un Stock Entry"""
