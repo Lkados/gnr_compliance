@@ -151,32 +151,23 @@ def create_gnr_movement_from_stock(stock_doc, item):
         return False
 
 def determine_movement_type(stock_entry_type, item):
-    """Détermine le type de mouvement GNR selon le type de Stock Entry"""
+    """Détermine le type de mouvement GNR selon le type de Stock Entry
+    Valeurs autorisées: Vente, Achat, Stock, Transfert
+    """
     
-    # Déterminer selon les entrepôts source/cible (logique principale)
+    # Déterminer uniquement selon les entrepôts source/cible
+    # Pas de restriction sur le type de Stock Entry
     if item.s_warehouse and item.t_warehouse:
         return "Transfert"
     elif item.t_warehouse and not item.s_warehouse:
-        return "Entrée"
+        # Entrée en stock = Achat
+        return "Achat"
     elif item.s_warehouse and not item.t_warehouse:
-        return "Sortie"
-    
-    # Si aucun entrepôt n'est défini, déterminer selon le type de Stock Entry
-    # Utiliser une logique plus flexible basée sur les mots-clés
-    stock_entry_type_lower = stock_entry_type.lower() if stock_entry_type else ""
-    
-    if any(word in stock_entry_type_lower for word in ["receipt", "receive", "purchase", "buy", "entrée"]):
-        return "Entrée"
-    elif any(word in stock_entry_type_lower for word in ["issue", "sale", "sell", "delivery", "sortie", "consumption"]):
-        return "Sortie"
-    elif any(word in stock_entry_type_lower for word in ["transfer", "move", "transfert"]):
-        return "Transfert"
-    elif any(word in stock_entry_type_lower for word in ["manufacture", "production", "repack", "assembly"]):
-        return "Production"
-    
-    # Par défaut, essayer de déterminer selon le contexte
-    # Si on ne peut pas déterminer, utiliser "Stock" comme type générique
-    return "Stock"
+        # Sortie de stock = Vente
+        return "Vente"
+    else:
+        # Par défaut pour tous les autres cas
+        return "Stock"
 
 def cancel_mouvement_stock(doc, method):
     """Annule les mouvements GNR lors de l'annulation d'un Stock Entry"""
