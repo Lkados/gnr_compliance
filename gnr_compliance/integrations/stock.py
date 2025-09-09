@@ -272,6 +272,82 @@ def reprocess_stock_entries(from_date=None, to_date=None):
         return {'success': False, 'error': str(e)}
 
 @frappe.whitelist()
+def delete_gnr_movement(movement_name):
+    """
+    Supprime un mouvement GNR spécifique
+    """
+    try:
+        # Vérifier que le mouvement existe
+        if not frappe.db.exists("Mouvement GNR", movement_name):
+            return {'success': False, 'error': 'Mouvement GNR introuvable'}
+        
+        # Récupérer le document
+        doc = frappe.get_doc("Mouvement GNR", movement_name)
+        
+        # Si le document est soumis, l'annuler d'abord
+        if doc.docstatus == 1:
+            doc.cancel()
+        
+        # Supprimer le document
+        frappe.delete_doc("Mouvement GNR", movement_name, force=1)
+        frappe.db.commit()
+        
+        frappe.logger().info(f"[GNR] Mouvement {movement_name} supprimé avec succès")
+        
+        return {'success': True, 'message': f'Mouvement {movement_name} supprimé'}
+        
+    except Exception as e:
+        frappe.log_error(f"Erreur suppression mouvement GNR {movement_name}: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
+def delete_multiple_gnr_movements(movement_names):
+    """
+    Supprime plusieurs mouvements GNR en lot
+    """
+    try:
+        if isinstance(movement_names, str):
+            import json
+            movement_names = json.loads(movement_names)
+        
+        deleted_count = 0
+        errors = []
+        
+        for movement_name in movement_names:
+            try:
+                if frappe.db.exists("Mouvement GNR", movement_name):
+                    doc = frappe.get_doc("Mouvement GNR", movement_name)
+                    
+                    # Annuler si soumis
+                    if doc.docstatus == 1:
+                        doc.cancel()
+                    
+                    # Supprimer
+                    frappe.delete_doc("Mouvement GNR", movement_name, force=1)
+                    deleted_count += 1
+                    
+            except Exception as e:
+                errors.append(f"{movement_name}: {str(e)}")
+        
+        frappe.db.commit()
+        
+        if errors:
+            frappe.logger().warning(f"[GNR] Erreurs lors de la suppression: {errors}")
+        
+        frappe.logger().info(f"[GNR] {deleted_count} mouvements supprimés sur {len(movement_names)}")
+        
+        return {
+            'success': True, 
+            'deleted_count': deleted_count,
+            'total': len(movement_names),
+            'errors': errors if errors else None
+        }
+        
+    except Exception as e:
+        frappe.log_error(f"Erreur suppression multiple mouvements GNR: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+@frappe.whitelist()
 def find_stock_entries_with_gnr(from_date=None, to_date=None):
     """
     Fonction pour trouver et lister les Stock Entry avec articles GNR
