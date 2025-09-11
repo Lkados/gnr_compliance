@@ -31,7 +31,7 @@ doc_events = {
 
 # === Scripts personnalisés par DocType ===
 doctype_js = {
-    "Sales Invoice": ["public/js/sales_invoice_gnr.js", "public/js/sales_invoice_gnr_fix.js"],
+    "Sales Invoice": "public/js/sales_invoice_gnr_minimal.js",  # VERSION MINIMALE SANS BOUCLE
     "Purchase Invoice": "public/js/purchase_invoice_gnr.js", 
     "Stock Entry": "public/js/stock_entry_gnr.js",
     "Customer": "public/js/customer_attestation.js"
