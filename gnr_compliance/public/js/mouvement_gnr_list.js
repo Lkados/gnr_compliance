@@ -19,47 +19,6 @@ frappe.listview_settings['Mouvement GNR'] = {
             }, 
             'secondary'
         );
-
-        // Bouton pour supprimer les mouvements sélectionnés
-        listview.page.add_button(
-            __('Supprimer Mouvements Sélectionnés'), 
-            () => {
-                const selected = listview.get_checked_items();
-                if (selected.length === 0) {
-                    frappe.msgprint('Veuillez sélectionner au moins un mouvement à supprimer');
-                    return;
-                }
-                
-                frappe.confirm(
-                    `Êtes-vous sûr de vouloir supprimer ${selected.length} mouvement(s) GNR ? Cette action est irréversible.`,
-                    function() {
-                        frappe.call({
-                            method: 'gnr_compliance.integrations.stock.delete_multiple_gnr_movements',
-                            args: {
-                                movement_names: selected.map(item => item.name)
-                            },
-                            callback: function(r) {
-                                if (r.message && r.message.success) {
-                                    frappe.msgprint({
-                                        title: 'Succès',
-                                        message: `${r.message.deleted_count} mouvement(s) GNR supprimé(s)`,
-                                        indicator: 'green'
-                                    });
-                                    listview.refresh();
-                                } else {
-                                    frappe.msgprint({
-                                        title: 'Erreur',
-                                        message: r.message.error || 'Erreur lors de la suppression',
-                                        indicator: 'red'
-                                    });
-                                }
-                            }
-                        });
-                    }
-                );
-            }, 
-            'danger'
-        );
         
         // Bouton pour vérifier la cohérence des données
         listview.page.add_button(
